@@ -26,9 +26,9 @@ STAGE1_PROJECTOR_PATH="${STAGE1_PROJECTOR_PATH:-}"
 # data path
 # ------------------------------------------------------------
 
-TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-./raw_geometry_data/stage2_geometry_grounding/train.json}"
-EVAL_DATA_PATH="${EVAL_DATA_PATH:-./raw_geometry_data/stage2_geometry_grounding/validation.json}"
-IMAGE_FOLDER="${IMAGE_FOLDER:-./raw_geometry_data/stage2_geometry_grounding/images}"
+TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-./geometry_data/stage2_geometry_grounding/train.json}"
+EVAL_DATA_PATH="${EVAL_DATA_PATH:-./geometry_data/stage2_geometry_grounding/validation.json}"
+IMAGE_FOLDER="${IMAGE_FOLDER:-./geometry_data/stage2_geometry_grounding/images}"
 
 
 # ------------------------------------------------------------

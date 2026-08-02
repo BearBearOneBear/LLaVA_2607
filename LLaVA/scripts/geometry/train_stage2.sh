@@ -66,13 +66,13 @@ fi
 # ------------------------------------------------------------
 
 # train
-TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-./raw_geometry_data/stage2_geometry_grounding/train.json}"
+TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-./geometry_data/stage2_geometry_grounding/train.json}"
 
 # validation
-EVAL_DATA_PATH="${EVAL_DATA_PATH:-./raw_geometry_data/stage2_geometry_grounding/validation.json}"
+EVAL_DATA_PATH="${EVAL_DATA_PATH:-./geometry_data/stage2_geometry_grounding/validation.json}"
 
 # image
-IMAGE_FOLDER="${IMAGE_FOLDER:-./raw_geometry_data/stage2_geometry_grounding/images}"
+IMAGE_FOLDER="${IMAGE_FOLDER:-./geometry_data/stage2_geometry_grounding/images}"
 
 
 # ------------------------------------------------------------
@@ -193,13 +193,11 @@ DATALOADER_NUM_WORKERS="${DATALOADER_NUM_WORKERS:-4}"
 IFS=',' read -ra GPU_ARRAY <<< "${CUDA_VISIBLE_DEVICES}"
 NUM_GPUS="${#GPU_ARRAY[@]}"
 
-GLOBAL_BATCH_SIZE=$(
-    (
-        NUM_GPUS
-        * PER_DEVICE_TRAIN_BATCH_SIZE
-        * GRADIENT_ACCUMULATION_STEPS
-    )
-)
+GLOBAL_BATCH_SIZE=$((
+    NUM_GPUS
+    * PER_DEVICE_TRAIN_BATCH_SIZE
+    * GRADIENT_ACCUMULATION_STEPS
+))
 
 
 echo "Starting Stage 2 LLM and projector training."

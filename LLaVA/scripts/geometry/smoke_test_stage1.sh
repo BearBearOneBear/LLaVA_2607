@@ -16,9 +16,9 @@ set -euo pipefail
 # data path
 # ------------------------------------------------------------
 
-TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-./geometry_data/stage1/train.json}"
-EVAL_DATA_PATH="${EVAL_DATA_PATH:-./geometry_data/stage1/validation.json}"
-IMAGE_FOLDER="${IMAGE_FOLDER:-./geometry_data/stage1/images}"
+TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-./geometry_data/stage1_geometry_grounding/train.json}"
+EVAL_DATA_PATH="${EVAL_DATA_PATH:-./geometry_data/stage1_geometry_grounding/validation.json}"
+IMAGE_FOLDER="${IMAGE_FOLDER:-./geometry_data/stage1_geometry_grounding/images}"
 
 
 # ------------------------------------------------------------

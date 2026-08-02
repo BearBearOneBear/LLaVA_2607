@@ -27,13 +27,13 @@ VISION_TOWER="${VISION_TOWER:-openai/clip-vit-large-patch14-336}"
 # ------------------------------------------------------------
 
 # train
-TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-./geometry_data/stage1/train.json}"
+TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-./geometry_data/stage1_geometry_grounding/train.json}"
 
 # validation
-EVAL_DATA_PATH="${EVAL_DATA_PATH:-./geometry_data/stage1/validation.json}"
+EVAL_DATA_PATH="${EVAL_DATA_PATH:-./geometry_data/stage1_geometry_grounding/validation.json}"
 
 # image
-IMAGE_FOLDER="${IMAGE_FOLDER:-./geometry_data/stage1/images}"
+IMAGE_FOLDER="${IMAGE_FOLDER:-./geometry_data/stage1_geometry_grounding/images}"
 
 
 # ------------------------------------------------------------
