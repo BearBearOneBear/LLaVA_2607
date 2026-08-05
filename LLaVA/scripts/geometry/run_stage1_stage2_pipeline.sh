@@ -54,7 +54,14 @@ mkdir -p "${LOG_DIR}"
 
 
 is_true() {
-    [[ "${1,,}" == "true" ]]
+    case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+        true|1|yes|y|on)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 

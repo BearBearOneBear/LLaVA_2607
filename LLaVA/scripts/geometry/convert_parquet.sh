@@ -18,7 +18,7 @@ set -euo pipefail
 # ============================================================
 
 
-CONVERTER="${CONVERTER:-./tools/geometry/convert_stage1_parquet.py}"
+CONVERTER="${CONVERTER:-./tools/geometry/convert_geometry_parquet.py}"
 
 STAGE1_DATA_DIR="${STAGE1_DATA_DIR:-./geometry_data/stage1_geometry_grounding}"
 STAGE2_DATA_DIR="${STAGE2_DATA_DIR:-./geometry_data/stage2_geometry_grounding}"
