@@ -18,8 +18,12 @@ set -euo pipefail
 # Stage 1 projector
 # ------------------------------------------------------------
 
-STAGE1_PROJECTOR_JSON="${STAGE1_PROJECTOR_JSON:-./checkpoints/geometry_stage1/best_stage1_projector.json}"
-STAGE1_PROJECTOR_PATH="${STAGE1_PROJECTOR_PATH:-}"
+STAGE1_PROJECTOR_PATH="${STAGE1_PROJECTOR_PATH:-./checkpoints/geometry_stage1/mm_projector.bin}"
+
+if [[ ! -f "${STAGE1_PROJECTOR_PATH}" ]]; then
+    echo "Stage 1 projector was not found: ${STAGE1_PROJECTOR_PATH}" >&2
+    exit 1
+fi
 
 
 # ------------------------------------------------------------
@@ -43,13 +47,7 @@ mkdir -p "${SMOKE_OUTPUT_DIR}"
 
 
 echo "Starting Stage 2 smoke test."
-echo "Stage 1 projector JSON: ${STAGE1_PROJECTOR_JSON}"
-
-if [[ -n "${STAGE1_PROJECTOR_PATH}" ]]; then
-    echo "Stage 1 projector: ${STAGE1_PROJECTOR_PATH}"
-else
-    echo "Stage 1 projector: loaded from JSON"
-fi
+echo "Stage 1 projector: ${STAGE1_PROJECTOR_PATH}"
 
 echo "Training data: ${TRAIN_DATA_PATH}"
 echo "Validation data: ${EVAL_DATA_PATH}"
@@ -61,7 +59,6 @@ echo "Output directory: ${SMOKE_OUTPUT_DIR}"
 # 기존 Stage 2 학습 스크립트를 재사용
 # ------------------------------------------------------------
 
-STAGE1_PROJECTOR_JSON="${STAGE1_PROJECTOR_JSON}" \
 STAGE1_PROJECTOR_PATH="${STAGE1_PROJECTOR_PATH}" \
 TRAIN_DATA_PATH="${TRAIN_DATA_PATH}" \
 EVAL_DATA_PATH="${EVAL_DATA_PATH}" \
@@ -72,6 +69,8 @@ MAX_STEPS=1 \
 PER_DEVICE_TRAIN_BATCH_SIZE=1 \
 PER_DEVICE_EVAL_BATCH_SIZE=1 \
 GRADIENT_ACCUMULATION_STEPS=1 \
+EVALUATION_STRATEGY=steps \
+SAVE_STRATEGY=steps \
 EVAL_STEPS=1 \
 SAVE_STEPS=1 \
 SAVE_TOTAL_LIMIT=1 \

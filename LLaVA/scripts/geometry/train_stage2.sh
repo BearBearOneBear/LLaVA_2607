@@ -27,33 +27,11 @@ VISION_TOWER="${VISION_TOWER:-openai/clip-vit-large-patch14-336}"
 # ------------------------------------------------------------
 # Stage 1 projector
 #
-# find_best_stage1_projector.py
+# Stage 1은 validation 없이 1 epoch을 수행하므로
+# 최종 output directory의 mm_projector.bin을 직접 사용한다.
 # ------------------------------------------------------------
 
-STAGE1_PROJECTOR_JSON="${STAGE1_PROJECTOR_JSON:-./checkpoints/geometry_stage1/best_stage1_projector.json}"
-
-STAGE1_PROJECTOR_PATH="${STAGE1_PROJECTOR_PATH:-}"
-
-
-# from JSON
-if [[ -z "${STAGE1_PROJECTOR_PATH}" ]]; then
-    STAGE1_PROJECTOR_PATH="$(
-        python - "${STAGE1_PROJECTOR_JSON}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-
-result_path = Path(sys.argv[1])
-
-with result_path.open("r", encoding="utf-8") as file:
-    result = json.load(file)
-
-print(result["projector_path"])
-PY
-    )"
-fi
-
+STAGE1_PROJECTOR_PATH="${STAGE1_PROJECTOR_PATH:-./checkpoints/geometry_stage1/mm_projector.bin}"
 
 if [[ ! -f "${STAGE1_PROJECTOR_PATH}" ]]; then
     echo "Stage 1 projector was not found: ${STAGE1_PROJECTOR_PATH}" >&2
@@ -159,7 +137,7 @@ MAX_GRAD_NORM="${MAX_GRAD_NORM:-1.0}"
 # 학습 step 수, -1은 전체
 MAX_STEPS="${MAX_STEPS:--1}"
 
-MODEL_MAX_LENGTH="${MODEL_MAX_LENGTH:-512}"
+MODEL_MAX_LENGTH="${MODEL_MAX_LENGTH:-2048}"
 
 
 # ------------------------------------------------------------
@@ -168,10 +146,14 @@ MODEL_MAX_LENGTH="${MODEL_MAX_LENGTH:-512}"
 # Stage 1보다 저장 간격을 넓게
 # ------------------------------------------------------------
 
+EVALUATION_STRATEGY="${EVALUATION_STRATEGY:-epoch}"
+SAVE_STRATEGY="${SAVE_STRATEGY:-epoch}"
+
 EVAL_STEPS="${EVAL_STEPS:-20}"
 SAVE_STEPS="${SAVE_STEPS:-20}"
+
 SAVE_TOTAL_LIMIT="${SAVE_TOTAL_LIMIT:-2}"
-LOGGING_STEPS="${LOGGING_STEPS:-1}"
+LOGGING_STEPS="${LOGGING_STEPS:-10}"
 
 
 # ------------------------------------------------------------
@@ -215,6 +197,9 @@ echo "Gradient accumulation steps: ${GRADIENT_ACCUMULATION_STEPS}"
 echo "Effective global batch size: ${GLOBAL_BATCH_SIZE}"
 echo "LLM learning rate: ${LEARNING_RATE}"
 echo "Projector learning rate: ${MM_PROJECTOR_LR}"
+echo "Number of epochs: ${NUM_TRAIN_EPOCHS}"
+echo "Evaluation strategy: ${EVALUATION_STRATEGY}"
+echo "Save strategy: ${SAVE_STRATEGY}"
 echo "BF16: ${BF16}"
 echo "FP16: ${FP16}"
 echo "TF32: ${TF32}"
@@ -256,9 +241,9 @@ deepspeed \
     --per_device_train_batch_size "${PER_DEVICE_TRAIN_BATCH_SIZE}" \
     --per_device_eval_batch_size "${PER_DEVICE_EVAL_BATCH_SIZE}" \
     --gradient_accumulation_steps "${GRADIENT_ACCUMULATION_STEPS}" \
-    --evaluation_strategy "steps" \
+    --evaluation_strategy "${EVALUATION_STRATEGY}" \
     --eval_steps "${EVAL_STEPS}" \
-    --save_strategy "steps" \
+    --save_strategy "${SAVE_STRATEGY}" \
     --save_steps "${SAVE_STEPS}" \
     --save_total_limit "${SAVE_TOTAL_LIMIT}" \
     --load_best_model_at_end True \
@@ -271,6 +256,8 @@ deepspeed \
     --lr_scheduler_type "cosine" \
     --max_grad_norm "${MAX_GRAD_NORM}" \
     --logging_steps "${LOGGING_STEPS}" \
+    --logging_first_step True \
+    --logging_nan_inf_filter False \
     --bf16 "${BF16}" \
     --fp16 "${FP16}" \
     --tf32 "${TF32}" \

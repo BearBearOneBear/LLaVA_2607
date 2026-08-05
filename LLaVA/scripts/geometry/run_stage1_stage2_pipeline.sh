@@ -6,44 +6,45 @@ set -euo pipefail
 # ============================================================
 # Stage 1 and Stage 2 Training Pipeline
 #
-#   1. Stage 1, 2 Parquet 변환
+#   1. Stage 1/2 Parquet 변환
 #   2. Stage 1 smoke test
-#   3. Stage 1 학습
-#   4. 최적 Stage 1 projector 선택
-#   5. Stage 2 smoke test
-#   6. Stage 2 학습
+#   3. Stage 1 projector 학습
+#   4. Stage 2 smoke test
+#   5. Stage 2 LLM + projector 학습
 #
-# 중간 단계에서 오류가 발생 시 중단
-# LLaVA 저장소 루트에서 실행
+# 중간 단계에서 오류가 발생하면 즉시 중단한다.
+# LLaVA 저장소 루트에서 실행한다.
 # ============================================================
 
 
 # ------------------------------------------------------------
 # 실행 여부 설정
 #
-# 기본값은 모든 단계를 실행, Flase로 생략
+# True  : 해당 단계 실행
+# False : 해당 단계 생략
 # ------------------------------------------------------------
 
 RUN_DATA_CONVERSION="${RUN_DATA_CONVERSION:-True}"
 RUN_STAGE1_SMOKE="${RUN_STAGE1_SMOKE:-True}"
 RUN_STAGE1_TRAINING="${RUN_STAGE1_TRAINING:-True}"
-RUN_STAGE1_SELECTION="${RUN_STAGE1_SELECTION:-True}"
 RUN_STAGE2_SMOKE="${RUN_STAGE2_SMOKE:-True}"
 RUN_STAGE2_TRAINING="${RUN_STAGE2_TRAINING:-True}"
 
 
 # ------------------------------------------------------------
-# output path
+# 출력 경로
 # ------------------------------------------------------------
 
 STAGE1_OUTPUT_DIR="${STAGE1_OUTPUT_DIR:-./checkpoints/geometry_stage1}"
 STAGE2_OUTPUT_DIR="${STAGE2_OUTPUT_DIR:-./checkpoints/geometry_stage2}"
 
-STAGE1_PROJECTOR_JSON="${STAGE1_PROJECTOR_JSON:-${STAGE1_OUTPUT_DIR}/best_stage1_projector.json}"
+# Stage 1은 validation 없이 1 epoch을 실행하므로
+# 최종 output directory에 저장된 projector를 직접 사용한다.
+STAGE1_PROJECTOR_PATH="${STAGE1_PROJECTOR_PATH:-${STAGE1_OUTPUT_DIR}/mm_projector.bin}"
 
 
 # ------------------------------------------------------------
-# log path
+# 로그 경로
 # ------------------------------------------------------------
 
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
@@ -52,21 +53,19 @@ LOG_DIR="${LOG_DIR:-./logs/geometry_pipeline/${RUN_ID}}"
 mkdir -p "${LOG_DIR}"
 
 
-
 is_true() {
     [[ "${1,,}" == "true" ]]
 }
 
 
 # ------------------------------------------------------------
-# 필요 파일 확인
+# 필요한 실행 파일 확인
 # ------------------------------------------------------------
 
 REQUIRED_FILES=(
     "scripts/geometry/convert_parquet.sh"
     "scripts/geometry/smoke_test_stage1.sh"
     "scripts/geometry/train_stage1.sh"
-    "tools/geometry/find_best_stage1_projector.py"
     "scripts/geometry/smoke_test_stage2.sh"
     "scripts/geometry/train_stage2.sh"
 )
@@ -118,7 +117,7 @@ fi
 
 
 # ============================================================
-# 3. Stage 1 학습
+# 3. Stage 1 projector 학습
 # ============================================================
 
 if is_true "${RUN_STAGE1_TRAINING}"; then
@@ -134,69 +133,56 @@ else
 fi
 
 
-# ============================================================
-# 4. 최적 Stage 1 projector 선택
-# ============================================================
+# ------------------------------------------------------------
+# Stage 2 실행 전 Stage 1 projector 확인
+# ------------------------------------------------------------
 
-if is_true "${RUN_STAGE1_SELECTION}"; then
-    echo "Step 4: Selecting the best Stage 1 projector."
-
-    python tools/geometry/find_best_stage1_projector.py \
-        --output_dir "${STAGE1_OUTPUT_DIR}" \
-        2>&1 | tee "${LOG_DIR}/04_stage1_projector_selection.log"
-
-    echo "Step 4: Stage 1 projector selection completed."
-else
-    echo "Step 4: Stage 1 projector selection skipped."
-fi
-
-
-# Stage 2를 실행하려면 Stage 1 projector JSON이 필요하다.
 if is_true "${RUN_STAGE2_SMOKE}" || is_true "${RUN_STAGE2_TRAINING}"; then
-    if [[ ! -f "${STAGE1_PROJECTOR_JSON}" ]]; then
-        echo "Stage 1 projector JSON was not found: ${STAGE1_PROJECTOR_JSON}" >&2
+    if [[ ! -f "${STAGE1_PROJECTOR_PATH}" ]]; then
+        echo "Stage 1 projector was not found:" >&2
+        echo "${STAGE1_PROJECTOR_PATH}" >&2
         exit 1
     fi
 fi
 
 
 # ============================================================
-# 5. Stage 2 smoke test
+# 4. Stage 2 smoke test
 # ============================================================
 
 if is_true "${RUN_STAGE2_SMOKE}"; then
-    echo "Step 5: Starting Stage 2 smoke test."
+    echo "Step 4: Starting Stage 2 smoke test."
 
-    STAGE1_PROJECTOR_JSON="${STAGE1_PROJECTOR_JSON}" \
+    STAGE1_PROJECTOR_PATH="${STAGE1_PROJECTOR_PATH}" \
     bash scripts/geometry/smoke_test_stage2.sh \
-        2>&1 | tee "${LOG_DIR}/05_stage2_smoke.log"
+        2>&1 | tee "${LOG_DIR}/04_stage2_smoke.log"
 
-    echo "Step 5: Stage 2 smoke test completed."
+    echo "Step 4: Stage 2 smoke test completed."
 else
-    echo "Step 5: Stage 2 smoke test skipped."
+    echo "Step 4: Stage 2 smoke test skipped."
 fi
 
 
 # ============================================================
-# 6. Stage 2 학습
+# 5. Stage 2 학습
 # ============================================================
 
 if is_true "${RUN_STAGE2_TRAINING}"; then
-    echo "Step 6: Starting Stage 2 training."
+    echo "Step 5: Starting Stage 2 training."
 
-    STAGE1_PROJECTOR_JSON="${STAGE1_PROJECTOR_JSON}" \
+    STAGE1_PROJECTOR_PATH="${STAGE1_PROJECTOR_PATH}" \
     OUTPUT_DIR="${STAGE2_OUTPUT_DIR}" \
     bash scripts/geometry/train_stage2.sh \
-        2>&1 | tee "${LOG_DIR}/06_stage2_training.log"
+        2>&1 | tee "${LOG_DIR}/05_stage2_training.log"
 
-    echo "Step 6: Stage 2 training completed."
+    echo "Step 5: Stage 2 training completed."
 else
-    echo "Step 6: Stage 2 training skipped."
+    echo "Step 5: Stage 2 training skipped."
 fi
 
 
 echo "Stage 1 and Stage 2 pipeline completed successfully."
 echo "Stage 1 output: ${STAGE1_OUTPUT_DIR}"
-echo "Stage 1 projector JSON: ${STAGE1_PROJECTOR_JSON}"
+echo "Stage 1 projector: ${STAGE1_PROJECTOR_PATH}"
 echo "Stage 2 output: ${STAGE2_OUTPUT_DIR}"
 echo "Logs: ${LOG_DIR}"
