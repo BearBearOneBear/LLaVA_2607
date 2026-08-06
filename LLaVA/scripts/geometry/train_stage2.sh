@@ -284,9 +284,9 @@ if [[ -d "${OUTPUT_DIR}" ]]; then
             -maxdepth 1 \
             -type d \
             -name 'checkpoint-*' \
-            2>/dev/null \
-        | sort \
-        | head -n 1
+            -print \
+            -quit \
+            2>/dev/null
     )"
 fi
 
@@ -360,24 +360,6 @@ if (( MIN_FREE_DISK_GB > 0 )) \
     exit 1
 fi
 
-if [[ -d "${OUTPUT_DIR}" ]] \
-    && [[ -n "$(
-        find "${OUTPUT_DIR}" \
-            -maxdepth 1 \
-            -type d \
-            -name 'checkpoint-*' \
-            -print \
-            -quit \
-            2>/dev/null
-    )" ]] \
-    && [[ "$(printf '%s' "${RESUME_FROM_CHECKPOINT}" | tr 'A-Z' 'a-z')" != "true" ]]; then
-
-    echo "Existing checkpoints found in ${OUTPUT_DIR}." >&2
-    echo "Training would silently resume from the existing state." >&2
-    echo "Remove the directory, use a new OUTPUT_DIR," >&2
-    echo "or set RESUME_FROM_CHECKPOINT=True to resume on purpose." >&2
-    exit 1
-fi
 
 mkdir -p "${OUTPUT_DIR}"
 
