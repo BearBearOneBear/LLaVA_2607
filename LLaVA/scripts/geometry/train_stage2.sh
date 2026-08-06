@@ -162,13 +162,13 @@ SAVE_TOTAL_LIMIT="${SAVE_TOTAL_LIMIT:-2}"
 LOGGING_STEPS="${LOGGING_STEPS:-10}"
 
 LOAD_BEST_MODEL_AT_END="${LOAD_BEST_MODEL_AT_END:-True}"
+RESUME_FROM_CHECKPOINT="${RESUME_FROM_CHECKPOINT:-False}"
 
 # False:
 #   output_dir에 checkpoint-*가 있으면 중단한다.
 #
 # True:
 #   업스트림 LLaVA의 자동 resume를 명시적으로 허용한다.
-RESUME_FROM_CHECKPOINT="${RESUME_FROM_CHECKPOINT:-False}"
 
 # ZeRO-3 full fine-tuning checkpoint 두 개와 최종 모델을
 # 고려한 보수적인 기본값이다.
@@ -357,6 +357,25 @@ if (( MIN_FREE_DISK_GB > 0 )) \
     echo "Insufficient free disk space for Stage 2." >&2
     echo "Available: ${AVAILABLE_GB} GB" >&2
     echo "Required: ${MIN_FREE_DISK_GB} GB" >&2
+    exit 1
+fi
+
+if [[ -d "${OUTPUT_DIR}" ]] \
+    && [[ -n "$(
+        find "${OUTPUT_DIR}" \
+            -maxdepth 1 \
+            -type d \
+            -name 'checkpoint-*' \
+            -print \
+            -quit \
+            2>/dev/null
+    )" ]] \
+    && [[ "$(printf '%s' "${RESUME_FROM_CHECKPOINT}" | tr 'A-Z' 'a-z')" != "true" ]]; then
+
+    echo "Existing checkpoints found in ${OUTPUT_DIR}." >&2
+    echo "Training would silently resume from the existing state." >&2
+    echo "Remove the directory, use a new OUTPUT_DIR," >&2
+    echo "or set RESUME_FROM_CHECKPOINT=True to resume on purpose." >&2
     exit 1
 fi
 
