@@ -7,6 +7,10 @@ import json
 import math
 import os
 import re
+<<<<<<< HEAD
+import random
+=======
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from io import BytesIO
@@ -44,7 +48,14 @@ DATASET_GLOBS = {
 CONCEPT_ALIASES = {
     "triangle_altitude": ["triangle altitude", "altitude"],
     "triangle_median": ["triangle median", "median"],
+<<<<<<< HEAD
+    # The Stage 2 template reads "FI bisects angle DFJ", which contains neither
+    # "angle bisector" nor "triangle angle bisector". Without the verb form this
+    # concept is never detected and caps local accuracy at 26/27.
+    "triangle_angle_bisector": ["triangle angle bisector", "angle bisector", "bisects angle"],
+=======
     "triangle_angle_bisector": ["triangle angle bisector", "angle bisector"],
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
     "triangle_perpendicular_bisector": ["triangle perpendicular bisector", "perpendicular bisector"],
     "triangle_centroid": ["triangle centroid", "centroid"],
     "triangle_circumcenter": ["triangle circumcenter", "circumcenter"],
@@ -105,6 +116,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-new-tokens-anchor", type=int, default=768)
     parser.add_argument("--max-samples", type=int, default=0, help="0 means all samples per dataset.")
     parser.add_argument("--resume", action="store_true")
+<<<<<<< HEAD
+    parser.add_argument(
+        "--image-mode",
+        choices=["normal", "shuffled", "blank", "none"],
+        default="normal",
+        help=(
+            "Image ablation applied only at evaluation time: normal=original image; "
+            "shuffled=another image from the same dataset; blank=white image with the same size; "
+            "none=text-only prompt with no image token or image tensor."
+        ),
+    )
+=======
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--pair-signature-threshold",
@@ -140,10 +164,35 @@ def load_parquet_records(data_dir: Path, dataset_name: str) -> list[dict]:
 
     records: list[dict] = []
     for path in files:
+<<<<<<< HEAD
+        # A shard that fails to open is raised rather than skipped. Committing
+        # parquet through a text-mode filter truncates it to a couple of bytes,
+        # and a skipped shard would quietly shrink the evaluation set instead of
+        # reporting a broken input.
+        try:
+            table = pq.read_table(path)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to read {path}: {type(exc).__name__}: {exc}. "
+                "If the file is only a few bytes, it was likely corrupted in "
+                "transit; add '*.parquet binary' to .gitattributes and recommit."
+            ) from exc
+
+        shard_records = table.to_pylist()
+        records.extend(shard_records)
+        print(f"Loaded {len(shard_records):,} rows from {path}")
+
+    if not records:
+        raise RuntimeError(
+            f"Dataset {dataset_name} matched {len(files)} file(s) but contains no rows."
+        )
+
+=======
         table = pq.read_table(path)
         shard_records = table.to_pylist()
         records.extend(shard_records)
         print(f"Loaded {len(shard_records):,} rows from {path}")
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
     print(f"Dataset {dataset_name}: {len(records):,} total rows from {len(files)} shard(s).")
     return records
 
@@ -234,16 +283,30 @@ def generate_one(
     image_processor,
     conv_mode: str,
     max_new_tokens: int,
+<<<<<<< HEAD
+    image_mode: str = "normal",
+    image_override: Any | None = None,
+=======
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
 ) -> str:
     user_prompt = str(row.get("prompt") or "").strip()
     if not user_prompt:
         raise ValueError(f"Row {row.get('id')} has an empty prompt.")
 
     qs = user_prompt.replace(DEFAULT_IMAGE_TOKEN, "").strip()
+<<<<<<< HEAD
+    use_image = image_mode != "none"
+    if use_image:
+        if getattr(model.config, "mm_use_im_start_end", False):
+            qs = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN + "\n" + qs
+        else:
+            qs = DEFAULT_IMAGE_TOKEN + "\n" + qs
+=======
     if getattr(model.config, "mm_use_im_start_end", False):
         qs = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN + "\n" + qs
     else:
         qs = DEFAULT_IMAGE_TOKEN + "\n" + qs
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
 
     conv = conv_templates[conv_mode].copy()
     conv.append_message(conv.roles[0], qs)
@@ -251,6 +314,38 @@ def generate_one(
     prompt = conv.get_prompt()
 
     device = model_input_device(model)
+<<<<<<< HEAD
+    if use_image:
+        input_ids = tokenizer_image_token(
+            prompt,
+            tokenizer,
+            IMAGE_TOKEN_INDEX,
+            return_tensors="pt",
+        ).unsqueeze(0).to(device)
+    else:
+        input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
+
+    generate_kwargs = dict(
+        do_sample=False,
+        temperature=0.0,
+        num_beams=1,
+        max_new_tokens=max_new_tokens,
+        use_cache=True,
+    )
+
+    if use_image:
+        image_value = row["image"] if image_override is None else image_override
+        image = decode_image(image_value)
+        if image_mode == "blank":
+            image = Image.new("RGB", image.size, (255, 255, 255))
+        image_tensor = process_images([image], image_processor, model.config)[0]
+        image_tensor = image_tensor.unsqueeze(0).to(device=device, dtype=model_dtype(model))
+        generate_kwargs["images"] = image_tensor
+        generate_kwargs["image_sizes"] = [image.size]
+
+    with torch.inference_mode():
+        output_ids = model.generate(input_ids, **generate_kwargs)
+=======
     input_ids = tokenizer_image_token(
         prompt,
         tokenizer,
@@ -273,11 +368,65 @@ def generate_one(
             max_new_tokens=max_new_tokens,
             use_cache=True,
         )
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
 
     text = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
     return text
 
 
+<<<<<<< HEAD
+def build_shuffled_image_map(rows: list[dict], seed: int) -> dict[str, tuple[Any, str]]:
+    """Map each source image hash to a different image from the same dataset.
+
+    Local/anchor rows sharing one image get the same shuffled replacement, so pair
+    consistency stays measurable. The mapping is deterministic for a fixed seed and
+    rotates a shuffled list of unique images, so nothing maps to itself.
+
+    A plain rotation lands on an image of the same concept about one time in
+    twenty-seven, and those cases score as if the model had read the diagram
+    correctly, inflating the ablation. Rotations are therefore retried within each
+    concept group until the replacement's concept differs, which is what makes the
+    shuffled condition a floor rather than a slightly softened normal condition.
+    """
+    representatives: dict[str, Any] = {}
+    concepts: dict[str, str] = {}
+    for idx, row in enumerate(rows):
+        key = str(row.get("image_sha256") or f"__row_{idx}")
+        representatives.setdefault(key, row.get("image"))
+        concepts.setdefault(key, str(row.get("concept") or ""))
+
+    keys = list(representatives)
+    if len(keys) < 2:
+        return {k: (representatives[k], k) for k in keys}
+
+    rng = random.Random(seed)
+    rng.shuffle(keys)
+
+    mapping: dict[str, str] = {}
+    for offset in range(1, len(keys)):
+        remaining = [k for k in keys if k not in mapping]
+        if not remaining:
+            break
+        for src in remaining:
+            dst = keys[(keys.index(src) + offset) % len(keys)]
+            if dst == src:
+                continue
+            if concepts.get(dst) and concepts[dst] == concepts.get(src):
+                continue
+            mapping[src] = dst
+
+    # Datasets with a single concept, or a handful of images, may leave a few
+    # sources unmatched. Falling back to the plain rotation keeps every row
+    # scored rather than dropping it.
+    for index, src in enumerate(keys):
+        if src not in mapping:
+            mapping[src] = keys[(index + 1) % len(keys)]
+
+    return {src: (representatives[dst], dst) for src, dst in mapping.items()}
+
+
+=======
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
 def read_jsonl(path: Path) -> list[dict]:
     if not path.exists():
         return []
@@ -307,11 +456,26 @@ def aliases_for_concept(concept: str) -> list[str]:
 
 
 def predict_concept(text: str, concepts: Iterable[str]) -> str | None:
+<<<<<<< HEAD
+    """Concept named by a sentence, or None when none is recognisable.
+
+    A trailing plural is tolerated. Stage 1's point template is plural whenever
+    the figure holds more than one point ("M, J, G, and L are points"), which is
+    90% of that class, and an exact-form match would score it as unrecognised
+    rather than wrong. Aliases are matched against the record's own concept list,
+    so the loosened form cannot pull a Stage 2 concept toward a Stage 1 one.
+    """
+=======
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
     normalized = normalize_concept_text(text)
     matches: list[tuple[int, str]] = []
     for concept in concepts:
         for alias in aliases_for_concept(concept):
+<<<<<<< HEAD
+            if re.search(rf"(?:^|\s){re.escape(alias)}s?(?:$|\s)", normalized):
+=======
             if re.search(rf"(?:^|\s){re.escape(alias)}(?:$|\s)", normalized):
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
                 matches.append((len(alias), concept))
                 break
     if not matches:
@@ -331,6 +495,29 @@ def expected_points(row: dict) -> set[str]:
     return set()
 
 
+<<<<<<< HEAD
+# Longest run of concatenated point labels in the Stage 2 templates. Quadrilateral
+# concepts name four vertices at once ("ARJL is a parallelogram"), and roughly two
+# thirds of all runs are three or four letters long, so a two-letter bound drops
+# most of them.
+MAX_LABEL_RUN = 4
+
+
+def extract_point_labels(text: str) -> set[str]:
+    """Point labels named in a sentence.
+
+    No stop-word filter is applied. Two-letter English words are also valid label
+    pairs -- "AI is a diameter of the circle" is a real template -- so filtering
+    them would silently discard genuine labels. The surrounding prose is
+    lowercase in every template, which leaves an all-caps run unambiguous.
+    """
+    # Remove an initial English article so "A right triangle ..." does not become point A.
+    cleaned = re.sub(r"^\s*A\s+(?=[a-z])", "", str(text or ""))
+    tokens = re.findall(rf"\b[A-Z]{{1,{MAX_LABEL_RUN}}}\b", cleaned)
+    result: set[str] = set()
+    for token in tokens:
+        result.update(token)
+=======
 def extract_point_labels(text: str) -> set[str]:
     # Remove an initial English article so "A right triangle ..." does not become point A.
     cleaned = re.sub(r"^\s*A\s+(?=[a-z])", "", str(text or ""))
@@ -344,6 +531,7 @@ def extract_point_labels(text: str) -> set[str]:
             result.add(token)
         else:
             result.update(token)
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
     return result
 
 
@@ -475,7 +663,17 @@ def score_concept_records(records: list[dict]) -> dict[str, Any]:
             per_concept[gold]["correct"] += 1
         confusion[(gold, pred or "<unparsed>")] += 1
 
+<<<<<<< HEAD
+        # The gold is the labels the reference sentence names, not every label in
+        # the figure. A local answer describes one relation and mentions only the
+        # points it involves: "C is the centroid of triangle JWM" names four of
+        # the figure's six points, and the angle concepts ("∠1 and ∠2 are
+        # vertical angles") name none at all. Scoring against the full label set
+        # makes recall unreachable for those concepts by construction.
+        gold_pts = extract_point_labels(row.get("gold_answer", ""))
+=======
         gold_pts = expected_points({"point_labels": row.get("gold_point_labels")})
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
         pred_pts = extract_point_labels(row.get("prediction", ""))
         p = prf(pred_pts, gold_pts)
         point_counts["tp"] += p["tp"]
@@ -658,6 +856,101 @@ def point_count_bin(value: Any) -> str:
     return "11-12+"
 
 
+<<<<<<< HEAD
+def bool_bucket(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "unknown"
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return "true"
+    if text in {"0", "false", "no", "n", "off", "", "none", "null"}:
+        return "false"
+    return "unknown"
+
+
+def nonzero_bucket(value: Any) -> str:
+    try:
+        return "present" if float(value) > 0 else "absent"
+    except Exception:
+        if value is None:
+            return "unknown"
+        return "present" if str(value).strip() else "absent"
+
+
+def max_collinear_bucket(value: Any) -> str:
+    try:
+        n = int(value)
+    except Exception:
+        return "unknown"
+    # Any three or more points on one line constitute a non-trivial collinear set.
+    return "has_3plus_collinear" if n >= 3 else "no_3plus_collinear"
+
+
+def parse_symbol_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(x).strip() for x in value if str(x).strip()]
+    if isinstance(value, dict):
+        return [str(k).strip() for k, v in value.items() if v and str(k).strip()]
+    text = str(value).strip()
+    if not text or text.lower() in {"none", "null", "[]", "{}"}:
+        return []
+    try:
+        parsed = json.loads(text)
+        if parsed is not value:
+            return parse_symbol_list(parsed)
+    except Exception:
+        pass
+    # Handles comma-separated strings and Python-list-like strings.
+    parts = re.split(r"[,;|]", text.strip("[](){}"))
+    return [p.strip().strip("'\"") for p in parts if p.strip().strip("'\"")]
+
+
+def grouped_anchor_metrics(records: list[dict], key_fn) -> dict[str, Any]:
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for row in records:
+        groups[str(key_fn(row))].append(row)
+    return {name: score_anchor_records(rows) for name, rows in sorted(groups.items()) if rows}
+
+
+def stage3_stratified_metrics(records: list[dict]) -> dict[str, Any]:
+    """Break Stage-3 anchor performance down along the controlled metadata axes."""
+    out: dict[str, Any] = {
+        "point_count_bin": grouped_anchor_metrics(
+            records, lambda r: point_count_bin(r.get("gold_point_count"))
+        ),
+        "ignored_symbol_count": grouped_anchor_metrics(
+            records, lambda r: nonzero_bucket(r.get("ignored_symbol_count"))
+        ),
+        "unseen_symbols": grouped_anchor_metrics(
+            records, lambda r: "present" if parse_symbol_list(r.get("unseen_symbols")) else "absent"
+        ),
+        "max_collinear": grouped_anchor_metrics(
+            records, lambda r: max_collinear_bucket(r.get("max_collinear"))
+        ),
+        "values_in_diagram": grouped_anchor_metrics(
+            records, lambda r: bool_bucket(r.get("values_in_diagram"))
+        ),
+    }
+
+    # Non-exclusive per-symbol slices are useful inside the unseen variant.
+    symbol_rows: dict[str, list[dict]] = defaultdict(list)
+    for row in records:
+        for symbol in parse_symbol_list(row.get("unseen_symbols")):
+            symbol_rows[symbol].append(row)
+    if symbol_rows:
+        out["unseen_symbol_type"] = {
+            symbol: score_anchor_records(rows)
+            for symbol, rows in sorted(symbol_rows.items())
+        }
+    return out
+
+
+=======
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
 def score_dataset(records: list[dict], dataset_name: str, pair_threshold: float) -> dict[str, Any]:
     if dataset_name == "stage1":
         return {"dataset": dataset_name, "stage1_behavior": score_concept_records(records)}
@@ -676,6 +969,13 @@ def score_dataset(records: list[dict], dataset_name: str, pair_threshold: float)
             "pair_consistency": pair_metrics,
         }
 
+<<<<<<< HEAD
+    metrics = {
+        "dataset": dataset_name,
+        "anchor": score_anchor_records(records),
+        "stratified": stage3_stratified_metrics(records),
+    }
+=======
     metrics = {"dataset": dataset_name, "anchor": score_anchor_records(records)}
     if dataset_name == "stage3_wide":
         bins = defaultdict(list)
@@ -684,6 +984,7 @@ def score_dataset(records: list[dict], dataset_name: str, pair_threshold: float)
         metrics["point_count_bins"] = {
             name: score_anchor_records(rows) for name, rows in sorted(bins.items())
         }
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
     return metrics
 
 
@@ -705,6 +1006,12 @@ def metadata_from_row(row: dict, sample_id: str, dataset_name: str) -> dict[str,
         "source_split",
         "values_in_diagram",
         "image_text_labels",
+<<<<<<< HEAD
+        "ignored_symbol_count",
+        "unseen_symbols",
+        "max_collinear",
+=======
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
     ]
     out = {
         "id": sample_id,
@@ -736,16 +1043,29 @@ def run_dataset_inference(
     if args.max_samples > 0:
         rows = rows[: args.max_samples]
 
+<<<<<<< HEAD
+    model_dir = args.output_dir / args.model_kind / args.image_mode
+    model_dir.mkdir(parents=True, exist_ok=True)
+    output_path = model_dir / f"{dataset_name}.jsonl"
+
+    shuffled_images = build_shuffled_image_map(rows, args.seed) if args.image_mode == "shuffled" else {}
+
+=======
     model_dir = args.output_dir / args.model_kind
     model_dir.mkdir(parents=True, exist_ok=True)
     output_path = model_dir / f"{dataset_name}.jsonl"
 
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
     existing = read_jsonl(output_path) if args.resume else []
     completed_ids = {str(x["id"]) for x in existing}
     mode = "a" if args.resume else "w"
 
     with output_path.open(mode, encoding="utf-8") as handle:
+<<<<<<< HEAD
+        for idx, row in enumerate(tqdm(rows, desc=f"{args.model_kind}:{args.image_mode}:{dataset_name}")):
+=======
         for idx, row in enumerate(tqdm(rows, desc=f"{args.model_kind}:{dataset_name}")):
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
             sample_id = get_sample_id(row, idx)
             if sample_id in completed_ids:
                 continue
@@ -754,6 +1074,15 @@ def run_dataset_inference(
             is_anchor = task_kind == "anchor" or dataset_name.startswith("stage3_")
             max_new_tokens = args.max_new_tokens_anchor if is_anchor else args.max_new_tokens_local
 
+<<<<<<< HEAD
+            source_image_key = str(row.get("image_sha256") or f"__row_{idx}")
+            image_override = None
+            shuffled_image_key = None
+            if args.image_mode == "shuffled":
+                image_override, shuffled_image_key = shuffled_images[source_image_key]
+
+=======
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
             try:
                 prediction = generate_one(
                     row,
@@ -762,6 +1091,11 @@ def run_dataset_inference(
                     image_processor=image_processor,
                     conv_mode=args.conv_mode,
                     max_new_tokens=max_new_tokens,
+<<<<<<< HEAD
+                    image_mode=args.image_mode,
+                    image_override=image_override,
+=======
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
                 )
                 error = None
             except Exception as exc:
@@ -772,6 +1106,11 @@ def run_dataset_inference(
             item.update(
                 {
                     "model_kind": args.model_kind,
+<<<<<<< HEAD
+                    "image_mode": args.image_mode,
+                    "shuffled_image_sha256": shuffled_image_key,
+=======
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
                     "prediction": prediction,
                     "error": error,
                 }
@@ -787,7 +1126,11 @@ def run_dataset_inference(
 
 
 def write_metrics(args: argparse.Namespace, dataset_name: str, metrics: dict[str, Any]) -> Path:
+<<<<<<< HEAD
+    metrics_dir = args.output_dir / args.model_kind / args.image_mode / "metrics"
+=======
     metrics_dir = args.output_dir / args.model_kind / "metrics"
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
     metrics_dir.mkdir(parents=True, exist_ok=True)
     path = metrics_dir / f"{dataset_name}.json"
     with path.open("w", encoding="utf-8") as handle:
@@ -817,6 +1160,10 @@ def main() -> None:
         metrics.update(
             {
                 "model_kind": args.model_kind,
+<<<<<<< HEAD
+                "image_mode": args.image_mode,
+=======
+>>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
                 "prediction_file": str(prediction_path),
                 "generation": {
                     "greedy": True,
