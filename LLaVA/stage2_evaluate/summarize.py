@@ -83,18 +83,61 @@ def collect_stratified(m: dict | None) -> dict[str, Any]:
     return out
 
 
+def representation_primary_rows(rep: dict | None) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for model_name in ("llava-v1.5-7b", "stage2"):
+        model = get(rep, "experiment_a", "models", model_name, default={}) or {}
+        for layer, data in sorted((model.get("layers") or {}).items(), key=lambda kv: int(kv[0])):
+            normal_raw = get(data, "normal_minus_blank", "raw", default={}) or {}
+            normal_centered = get(data, "normal_minus_blank", "centered", default={}) or {}
+            shuffled_centered = get(data, "shuffled_minus_blank", "centered", default={}) or {}
+            rows.append({
+                "model": model_name,
+                "layer": int(layer),
+                "raw_s_same": normal_raw.get("s_same"),
+                "raw_s_diff": normal_raw.get("s_diff"),
+                "raw_separation": normal_raw.get("separation"),
+                "raw_random_cosine": normal_raw.get("random_cosine_baseline"),
+                "centered_separation": normal_centered.get("separation"),
+                "centered_random_cosine": normal_centered.get("random_cosine_baseline"),
+                "shuffled_centered_separation": shuffled_centered.get("separation"),
+                "delta_norm_mean": get(data, "normal_minus_blank", "norm", "mean"),
+            })
+    return rows
+
+
+def representation_alignment_rows(rep: dict | None) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    alignments = get(rep, "experiment_b", "alignments", default={}) or {}
+    for student_name, by_layer in alignments.items():
+        for layer, by_teacher in sorted(by_layer.items(), key=lambda kv: int(kv[0])):
+            for teacher_format in ("T1", "T2"):
+                for state_name in ("h_pre", "delta"):
+                    m = get(by_teacher, teacher_format, state_name, default={}) or {}
+                    rows.append({
+                        "student": student_name,
+                        "layer": int(layer),
+                        "teacher": teacher_format,
+                        "state": state_name,
+                        "matched": m.get("matched_cosine"),
+                        "mismatched": m.get("mismatched_cosine"),
+                        "margin": m.get("margin"),
+                    })
+    return rows
+
+
 def main() -> None:
     args = parse_args()
     root = args.root
 
     integrity = load_json(root / "integrity.json")
     weight = load_json(root / "weight_audit" / "summary.json")
+    representation = load_json(root / "representation" / "representation.json")
     language = {
         model: load_json(root / "language" / f"{model}.json")
         for model in ("base", "stage2")
     }
 
-    # Layer 1: normal-image baseline comparison.
     normal_metrics = {
         model: {
             dataset: load_metric(root, model, "normal", dataset)
@@ -102,7 +145,6 @@ def main() -> None:
         }
         for model in MODEL_ORDER
     }
-
     behavior = {
         "stage1_test_concept_accuracy": {
             model: get(normal_metrics[model]["stage1"], "stage1_behavior", "concept_accuracy")
@@ -126,7 +168,6 @@ def main() -> None:
         },
     }
 
-    # Image ablation: Stage2 model under the four inference-time image modes.
     stage2_mode_metrics = {
         mode: load_metric(root, "stage2", mode, "stage2") for mode in MODE_ORDER
     }
@@ -157,14 +198,12 @@ def main() -> None:
         },
     }
 
-    # Layer 4: Stage3 transfer by dataset and by image ablation mode.
     stage3_transfer: dict[str, Any] = {}
     for dataset in STAGE3_DATASETS:
         stage3_transfer[dataset] = {}
         for mode in MODE_ORDER:
             m = load_metric(root, "stage2", mode, dataset)
             stage3_transfer[dataset][mode] = compact_anchor(m)
-
     normal_base_f1 = get(stage3_transfer, "stage3_base", "normal", "fact_micro_f1")
     for dataset in STAGE3_DATASETS:
         current = get(stage3_transfer, dataset, "normal", "fact_micro_f1")
@@ -180,7 +219,6 @@ def main() -> None:
             if normal_f1 is not None and none_f1 is not None
             else None
         )
-
     stage3_stratified = {
         dataset: collect_stratified(load_metric(root, "stage2", "normal", dataset))
         for dataset in STAGE3_DATASETS
@@ -188,12 +226,12 @@ def main() -> None:
 
     ppl_base = get(language["base"], "wikitext_ppl", "perplexity")
     ppl_stage2 = get(language["stage2"], "wikitext_ppl", "perplexity")
-
     summary = {
         "integrity": integrity,
         "weight_audit": weight,
         "behavior": behavior,
         "image_ablation": image_ablation,
+        "representation_audit": representation,
         "language": {
             "base_ppl": ppl_base,
             "stage2_ppl": ppl_stage2,
@@ -205,7 +243,6 @@ def main() -> None:
         },
         "stage3_transfer": stage3_transfer,
         "stage3_stratified": stage3_stratified,
-        "representation_audit": "DEFERRED",
     }
 
     out_json = root / "evaluation_summary.json"
@@ -248,6 +285,81 @@ def main() -> None:
         "",
         f"- Visual gain (normal - none), local concept accuracy: {fmt(image_ablation['visual_gain_normal_minus_none']['local_concept_accuracy'])}",
         f"- Visual gain (normal - none), anchor fact F1: {fmt(image_ablation['visual_gain_normal_minus_none']['anchor_fact_micro_f1'])}",
+        "",
+        "## Representation — A. Stage2 visual anchor",
+        "",
+    ]
+
+    if representation is None:
+        lines += ["Representation audit result was not found.", ""]
+    else:
+        best = get(representation, "quick_decision", "best_stage2_layer_by_centered_visual_separation")
+        if best:
+            lines += [
+                f"- Best Stage2 layer by centered visual-residual separation: **{fmt(best.get('layer'))}** (separation {fmt(best.get('separation'))})",
+                "",
+            ]
+        lines += [
+            "`Δvisual = h_normal - h_blank`. Centered metrics subtract the dataset mean residual before cosine normalization. The shuffled column uses `h_shuffled - h_blank` but keeps the source concept labels.",
+            "",
+            "| model | layer | raw S_same | raw S_diff | raw separation | raw random cosine | centered separation | shuffled centered separation | mean ||Δvisual|| |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+        for row in representation_primary_rows(representation):
+            lines.append(
+                f"| {row['model']} | {row['layer']} | {fmt(row['raw_s_same'])} | {fmt(row['raw_s_diff'])} | "
+                f"{fmt(row['raw_separation'])} | {fmt(row['raw_random_cosine'])} | {fmt(row['centered_separation'])} | "
+                f"{fmt(row['shuffled_centered_separation'])} | {fmt(row['delta_norm_mean'])} |"
+            )
+
+        lines += [
+            "",
+            "Concept-specific S_same values are retained in `representation/representation.json` rather than expanded into this main report.",
+            "",
+            "## Representation — B. Student compatibility",
+            "",
+            "T1 = Stage2(image + anchor prompt). T2 = Stage2(image + structure_description + anchor prompt). Both students receive the same `structure_description + anchor prompt`. `delta` compares teacher Δvisual with student Δtext. Mismatched cosine deranges only the teacher rows.",
+            "",
+            "| student | layer | teacher | state | matched cosine | mismatched cosine | margin |",
+            "|---|---:|---|---|---:|---:|---:|",
+        ]
+        for row in representation_alignment_rows(representation):
+            lines.append(
+                f"| {row['student']} | {row['layer']} | {row['teacher']} | {row['state']} | "
+                f"{fmt(row['matched'])} | {fmt(row['mismatched'])} | {fmt(row['margin'])} |"
+            )
+
+        lines += [
+            "",
+            "### Teacher residual size — T1 vs T2",
+            "",
+            "| layer | mean ||Δvisual T1|| | mean ||Δvisual T2|| | T2/T1 norm ratio | cosine(ΔT1, ΔT2) |",
+            "|---:|---:|---:|---:|---:|",
+        ]
+        comparison = get(representation, "experiment_b", "teacher_delta_visual_comparison", default={}) or {}
+        for layer, row in sorted(comparison.items(), key=lambda kv: int(kv[0])):
+            lines.append(
+                f"| {layer} | {fmt(get(row, 'T1_delta_visual_norm', 'mean'))} | "
+                f"{fmt(get(row, 'T2_delta_visual_norm', 'mean'))} | "
+                f"{fmt(row.get('T2_over_T1_mean_norm_ratio'))} | "
+                f"{fmt(row.get('T1_vs_T2_delta_visual_cosine'))} |"
+            )
+
+        lines += [
+            "",
+            "### Student Δtext size",
+            "",
+            "| student | layer | mean ||Δtext|| | std ||Δtext|| |",
+            "|---|---:|---:|---:|",
+        ]
+        delta_text_norm = get(representation, "experiment_b", "student_delta_text_norm", default={}) or {}
+        for student, by_layer in delta_text_norm.items():
+            for layer, row in sorted(by_layer.items(), key=lambda kv: int(kv[0])):
+                lines.append(
+                    f"| {student} | {layer} | {fmt(row.get('mean'))} | {fmt(row.get('std'))} |"
+                )
+
+    lines += [
         "",
         "## Language",
         "",
@@ -300,24 +412,29 @@ def main() -> None:
         if not strat:
             lines += ["No stratified metadata found.", ""]
             continue
-        for axis in ("point_count_bin", "ignored_symbol_count", "unseen_symbols", "max_collinear", "values_in_diagram", "unseen_symbol_type"):
+        for axis in (
+            "point_count_bin",
+            "ignored_symbol_count",
+            "unseen_symbols",
+            "max_collinear",
+            "values_in_diagram",
+            "unseen_symbol_type",
+        ):
             buckets = strat.get(axis)
             if not buckets:
                 continue
-            lines += [f"**{axis_titles.get(axis, axis)}**", "", "| bucket | n | parse | fact F1 | point F1 |", "|---|---:|---:|---:|---:|"]
+            lines += [
+                f"**{axis_titles.get(axis, axis)}**",
+                "",
+                "| bucket | n | parse | fact F1 | point F1 |",
+                "|---|---:|---:|---:|---:|",
+            ]
             for bucket, bm in buckets.items():
                 lines.append(
                     f"| {bucket} | {fmt(bm.get('n'))} | {fmt(bm.get('parse_success_rate'))} | "
                     f"{fmt(bm.get('fact_micro_f1'))} | {fmt(bm.get('point_micro_f1'))} |"
                 )
             lines.append("")
-
-    lines += [
-        "## Representation",
-        "",
-        "Deferred. No representation-probe result is included in this evaluator version.",
-        "",
-    ]
 
     out_md = root / "evaluation_summary.md"
     out_md.write_text("\n".join(lines), encoding="utf-8")
