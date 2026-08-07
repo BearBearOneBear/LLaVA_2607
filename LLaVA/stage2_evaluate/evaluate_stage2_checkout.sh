@@ -1,9 +1,18 @@
 #!/bin/bash
-set -euo pipefail
+set -uo pipefail
+
 # ============================================================
 # Stage-2 Checkpoint Evaluator
 #
-# Directory layout expected:
+# Fail-open policy:
+#   - Each evaluation step runs independently.
+#   - A failed evaluator is recorded and the next evaluator is attempted.
+#   - If a Python process dies from CUDA OOM but the shell survives, later
+#     evaluations are still attempted.
+#   - If the whole job/shell is killed by the OS, scheduler, or GPU driver,
+#     no shell script can continue after that point.
+#
+# Expected layout:
 #   LLaVA/
 #   ├── checkpoints/geometry_stage1
 #   ├── checkpoints/geometry_stage2
@@ -18,8 +27,8 @@ set -euo pipefail
 #       └── evaluate_stage2_checkout.sh
 #
 # Layer 0 : integrity + weight delta
-# Layer 1 : Stage1/Stage2 behavior
-# Layer 2 : representation sanity check for KD design
+# Layer 1 : Stage1/Stage2 behavior + visual ablations
+# Layer 2 : representation anchor sanity check for Stage3 KD
 # Layer 3 : lightweight language preservation
 # Layer 4 : Stage3 transfer stress tests
 # ============================================================
@@ -57,60 +66,98 @@ RUN_STAGE3_IMAGE_ABLATIONS="${RUN_STAGE3_IMAGE_ABLATIONS:-True}"
 IMAGE_ABLATION_MODES="${IMAGE_ABLATION_MODES:-shuffled blank none}"
 RUN_SUMMARY="${RUN_SUMMARY:-True}"
 
-# 0 means all rows. Example: MAX_SAMPLES=20 for smoke test.
+# 0 means all rows. Example: MAX_SAMPLES=20 for a smoke test.
 MAX_SAMPLES="${MAX_SAMPLES:-0}"
 RESUME="${RESUME:-True}"
 
-# Representation audit defaults.
-REP_LAYERS="${REP_LAYERS:-8 16 24 32}"
-if [[ -z "${REP_STAGE2_MAX_SAMPLES+x}" ]]; then
-  REP_STAGE2_MAX_SAMPLES="${MAX_SAMPLES}"
-fi
-if [[ -z "${REP_STAGE3_SAMPLES+x}" ]]; then
-  if [[ "${MAX_SAMPLES}" != "0" ]]; then
-    REP_STAGE3_SAMPLES="${MAX_SAMPLES}"
-  else
-    REP_STAGE3_SAMPLES="200"
-  fi
-fi
-
-# Expensive LLM truncated SVD is disabled by default.
+# Weight audit options.
 SVD_TOPK="${SVD_TOPK:-0}"
-# WikiText requires Hugging Face network/cache access.
+
+# Representation audit options.
+REP_LAYERS="${REP_LAYERS:-8 16 24 32}"
+REP_STAGE2_MAX_SAMPLES="${REP_STAGE2_MAX_SAMPLES:-0}"
+REP_STAGE3_SAMPLES="${REP_STAGE3_SAMPLES:-200}"
+
+# Language audit options.
 SKIP_PPL="${SKIP_PPL:-False}"
 PPL_MAX_CHARS="${PPL_MAX_CHARS:-1500000}"
 
-required_files=(
-  "${SCRIPT_DIR}/inspect_artifacts.py"
-  "${SCRIPT_DIR}/inspect_weights.py"
-  "${SCRIPT_DIR}/evaluate_behavior.py"
-  "${SCRIPT_DIR}/evaluate_representation.py"
-  "${SCRIPT_DIR}/evaluate_language.py"
-  "${SCRIPT_DIR}/summarize.py"
-)
-for file in "${required_files[@]}"; do
-  if [[ ! -f "${file}" ]]; then
-    echo "Required evaluator file was not found: ${file}" >&2
-    exit 1
-  fi
-done
-
-if [[ ! -d "${TEST_DATA_DIR}" ]]; then
-  echo "Test data directory was not found: ${TEST_DATA_DIR}" >&2
+if ! mkdir -p "${OUTPUT_DIR}"; then
+  echo "Cannot create output directory: ${OUTPUT_DIR}" >&2
   exit 1
 fi
-if [[ ! -f "${STAGE1_DIR}/mm_projector.bin" ]]; then
-  echo "Stage-1 projector was not found: ${STAGE1_DIR}/mm_projector.bin" >&2
-  exit 1
-fi
-if [[ ! -f "${STAGE2_DIR}/config.json" ]]; then
-  echo "Stage-2 config was not found: ${STAGE2_DIR}/config.json" >&2
-  exit 1
-fi
-
-mkdir -p "${OUTPUT_DIR}"
+STEP_LOG_DIR="${OUTPUT_DIR}/step_logs"
+mkdir -p "${STEP_LOG_DIR}"
+STATUS_FILE="${OUTPUT_DIR}/step_status.tsv"
 RUN_LOG="${OUTPUT_DIR}/evaluate_stage2_checkout.log"
+
+printf 'step\tstatus\texit_code\tlog\n' > "${STATUS_FILE}"
 exec > >(tee "${RUN_LOG}") 2>&1
+
+record_status() {
+  local name="$1"
+  local status="$2"
+  local code="$3"
+  local log_path="${4:-}"
+  printf '%s\t%s\t%s\t%s\n' "${name}" "${status}" "${code}" "${log_path}" >> "${STATUS_FILE}"
+}
+
+record_skipped() {
+  local name="$1"
+  local reason="${2:-disabled}"
+  echo "SKIPPED: ${name} (${reason})"
+  record_status "${name}" "SKIPPED" "-" "${reason}"
+}
+
+LAST_STEP_RC=0
+run_step() {
+  local name="$1"
+  shift
+  local safe_name
+  safe_name="$(printf '%s' "${name}" | tr '/ :+' '_____')"
+  local step_log="${STEP_LOG_DIR}/${safe_name}.log"
+
+  echo
+  echo "============================================================"
+  echo "START: ${name}"
+  echo "============================================================"
+
+  "$@" 2>&1 | tee "${step_log}"
+  local rc=${PIPESTATUS[0]}
+  LAST_STEP_RC=${rc}
+
+  if [[ ${rc} -eq 0 ]]; then
+    echo "SUCCESS: ${name}"
+    record_status "${name}" "SUCCESS" "0" "${step_log}"
+  else
+    echo "WARNING: ${name} failed with exit code ${rc}." >&2
+    echo "Continuing with the next evaluation." >&2
+    record_status "${name}" "FAILED" "${rc}" "${step_log}"
+  fi
+
+  # Always return success so one evaluator cannot stop the orchestration.
+  return 0
+}
+
+warn_if_missing() {
+  local path="$1"
+  local label="$2"
+  if [[ ! -e "${path}" ]]; then
+    echo "WARNING: ${label} was not found: ${path}" >&2
+    echo "         Dependent steps may fail, but independent steps will still run." >&2
+  fi
+}
+
+# Preflight is warning-only so that as many independent results as possible survive.
+warn_if_missing "${SCRIPT_DIR}/inspect_artifacts.py" "inspect_artifacts.py"
+warn_if_missing "${SCRIPT_DIR}/inspect_weights.py" "inspect_weights.py"
+warn_if_missing "${SCRIPT_DIR}/evaluate_behavior.py" "evaluate_behavior.py"
+warn_if_missing "${SCRIPT_DIR}/evaluate_representation.py" "evaluate_representation.py"
+warn_if_missing "${SCRIPT_DIR}/evaluate_language.py" "evaluate_language.py"
+warn_if_missing "${SCRIPT_DIR}/summarize.py" "summarize.py"
+warn_if_missing "${TEST_DATA_DIR}" "test data directory"
+warn_if_missing "${STAGE1_DIR}/mm_projector.bin" "Stage-1 projector"
+warn_if_missing "${STAGE2_DIR}/config.json" "Stage-2 config"
 
 resume_arg=()
 if is_true "${RESUME}"; then
@@ -122,172 +169,251 @@ if [[ "${MAX_SAMPLES}" != "0" ]]; then
   max_arg+=(--max-samples "${MAX_SAMPLES}")
 fi
 
-read -r -a rep_layers_array <<< "${REP_LAYERS}"
+# A smoke-test MAX_SAMPLES should also cap representation work.
+rep_stage2_samples="${REP_STAGE2_MAX_SAMPLES}"
+rep_stage3_samples="${REP_STAGE3_SAMPLES}"
+if [[ "${MAX_SAMPLES}" != "0" ]]; then
+  if [[ "${rep_stage2_samples}" == "0" ]] || (( rep_stage2_samples > MAX_SAMPLES )); then
+    rep_stage2_samples="${MAX_SAMPLES}"
+  fi
+  if (( rep_stage3_samples > MAX_SAMPLES )); then
+    rep_stage3_samples="${MAX_SAMPLES}"
+  fi
+fi
+read -r -a rep_layer_args <<< "${REP_LAYERS}"
 
 echo "============================================================"
 echo "Stage-2 checkpoint evaluation"
 echo "Repository root: ${REPO_ROOT}"
 echo "Evaluator directory: ${SCRIPT_DIR}"
 echo "Base model: ${BASE_MODEL}"
-echo "Vicuna student: ${VICUNA_MODEL}"
+echo "Vicuna student candidate: ${VICUNA_MODEL}"
 echo "Stage-1 directory: ${STAGE1_DIR}"
 echo "Stage-2 directory: ${STAGE2_DIR}"
 echo "Test data: ${TEST_DATA_DIR}"
 echo "Output: ${OUTPUT_DIR}"
 echo "Run log: ${RUN_LOG}"
+echo "Status file: ${STATUS_FILE}"
 echo "Visible GPUs: ${CUDA_VISIBLE_DEVICES}"
 echo "Max samples per dataset: ${MAX_SAMPLES}"
 echo "Representation audit: ${RUN_REPRESENTATION}"
-echo "  Layers: ${REP_LAYERS}"
-echo "  Stage2 A samples: ${REP_STAGE2_MAX_SAMPLES} (0=all)"
-echo "  Stage3 B samples: ${REP_STAGE3_SAMPLES}"
+echo "Representation layers: ${REP_LAYERS}"
+echo "Representation Stage2 samples: ${rep_stage2_samples}"
+echo "Representation Stage3-base samples: ${rep_stage3_samples}"
 echo "Image ablations: ${RUN_IMAGE_ABLATIONS} (${IMAGE_ABLATION_MODES})"
 echo "Stage3 image ablations: ${RUN_STAGE3_IMAGE_ABLATIONS}"
+echo "Failure policy: fail-open per evaluator"
 echo "============================================================"
 
+# ---------------------------------------------------------------------------
+# Layer 0A: saved artifacts / trainer state
+# ---------------------------------------------------------------------------
 if is_true "${RUN_INTEGRITY}"; then
-  echo "[0A] Inspecting saved training artifacts."
-  python "${SCRIPT_DIR}/inspect_artifacts.py" \
-    --stage1-dir "${STAGE1_DIR}" \
-    --stage2-dir "${STAGE2_DIR}" \
-    --logs-root "${LOGS_ROOT}" \
-    --output "${OUTPUT_DIR}/integrity.json"
+  run_step "integrity" \
+    python "${SCRIPT_DIR}/inspect_artifacts.py" \
+      --stage1-dir "${STAGE1_DIR}" \
+      --stage2-dir "${STAGE2_DIR}" \
+      --logs-root "${LOGS_ROOT}" \
+      --output "${OUTPUT_DIR}/integrity.json"
 else
-  echo "[0A] Integrity inspection skipped."
+  record_skipped "integrity" "RUN_INTEGRITY=False"
 fi
 
+# ---------------------------------------------------------------------------
+# Layer 0B: Stage1->Stage2 projector and Base->Stage2 LLM weight changes
+# ---------------------------------------------------------------------------
 if is_true "${RUN_WEIGHT_AUDIT}"; then
-  echo "[0B] Analyzing Stage-2 weight changes on CPU."
-  python "${SCRIPT_DIR}/inspect_weights.py" \
-    --base-model "${BASE_MODEL}" \
-    --stage1-dir "${STAGE1_DIR}" \
-    --stage2-dir "${STAGE2_DIR}" \
-    --output-dir "${OUTPUT_DIR}/weight_audit" \
-    --svd-topk "${SVD_TOPK}"
-else
-  echo "[0B] Weight audit skipped."
-fi
-
-if is_true "${RUN_BEHAVIOR}"; then
-  for model_kind in base stage1 stage2; do
-    echo "[1] Behavior evaluation: ${model_kind} / normal image"
-    python "${SCRIPT_DIR}/evaluate_behavior.py" \
-      --model-kind "${model_kind}" \
+  run_step "weight_audit" \
+    python "${SCRIPT_DIR}/inspect_weights.py" \
       --base-model "${BASE_MODEL}" \
       --stage1-dir "${STAGE1_DIR}" \
       --stage2-dir "${STAGE2_DIR}" \
-      --data-dir "${TEST_DATA_DIR}" \
-      --datasets stage1 stage2 \
-      --image-mode normal \
-      --output-dir "${OUTPUT_DIR}" \
-      "${resume_arg[@]}" \
-      "${max_arg[@]}"
-  done
+      --output-dir "${OUTPUT_DIR}/weight_audit" \
+      --svd-topk "${SVD_TOPK}"
+else
+  record_skipped "weight_audit" "RUN_WEIGHT_AUDIT=False"
+fi
 
-  if is_true "${RUN_IMAGE_ABLATIONS}"; then
-    for image_mode in ${IMAGE_ABLATION_MODES}; do
-      echo "[1A] Stage2 visual ablation: stage2 model / ${image_mode}"
+# ---------------------------------------------------------------------------
+# Layer 1: Stage1 / Stage2 behavior
+# ---------------------------------------------------------------------------
+if is_true "${RUN_BEHAVIOR}"; then
+  for model_kind in base stage1 stage2; do
+    run_step "behavior_${model_kind}_normal" \
       python "${SCRIPT_DIR}/evaluate_behavior.py" \
-        --model-kind stage2 \
+        --model-kind "${model_kind}" \
         --base-model "${BASE_MODEL}" \
         --stage1-dir "${STAGE1_DIR}" \
         --stage2-dir "${STAGE2_DIR}" \
         --data-dir "${TEST_DATA_DIR}" \
         --datasets stage1 stage2 \
-        --image-mode "${image_mode}" \
+        --image-mode normal \
         --output-dir "${OUTPUT_DIR}" \
         "${resume_arg[@]}" \
         "${max_arg[@]}"
+  done
+
+  if is_true "${RUN_IMAGE_ABLATIONS}"; then
+    for image_mode in ${IMAGE_ABLATION_MODES}; do
+      run_step "behavior_stage2_${image_mode}" \
+        python "${SCRIPT_DIR}/evaluate_behavior.py" \
+          --model-kind stage2 \
+          --base-model "${BASE_MODEL}" \
+          --stage1-dir "${STAGE1_DIR}" \
+          --stage2-dir "${STAGE2_DIR}" \
+          --data-dir "${TEST_DATA_DIR}" \
+          --datasets stage1 stage2 \
+          --image-mode "${image_mode}" \
+          --output-dir "${OUTPUT_DIR}" \
+          "${resume_arg[@]}" \
+          "${max_arg[@]}"
     done
   else
-    echo "[1A] Stage2 visual ablations skipped."
+    for image_mode in ${IMAGE_ABLATION_MODES}; do
+      record_skipped "behavior_stage2_${image_mode}" "RUN_IMAGE_ABLATIONS=False"
+    done
   fi
 else
-  echo "[1] Behavior evaluation skipped."
+  record_skipped "behavior_base_normal" "RUN_BEHAVIOR=False"
+  record_skipped "behavior_stage1_normal" "RUN_BEHAVIOR=False"
+  record_skipped "behavior_stage2_normal" "RUN_BEHAVIOR=False"
+  for image_mode in ${IMAGE_ABLATION_MODES}; do
+    record_skipped "behavior_stage2_${image_mode}" "RUN_BEHAVIOR=False"
+  done
 fi
 
+# ---------------------------------------------------------------------------
+# Layer 2: representation anchor sanity check for Stage3 KD design
+# ---------------------------------------------------------------------------
 if is_true "${RUN_REPRESENTATION}"; then
-  echo "[2] Representation sanity check for KD design."
-  python "${SCRIPT_DIR}/evaluate_representation.py" \
-    --base-model "${BASE_MODEL}" \
-    --vicuna-model "${VICUNA_MODEL}" \
-    --stage2-dir "${STAGE2_DIR}" \
-    --data-dir "${TEST_DATA_DIR}" \
-    --output-dir "${OUTPUT_DIR}/representation" \
-    --layers "${rep_layers_array[@]}" \
-    --stage2-max-samples "${REP_STAGE2_MAX_SAMPLES}" \
-    --stage3-samples "${REP_STAGE3_SAMPLES}"
+  run_step "representation" \
+    python "${SCRIPT_DIR}/evaluate_representation.py" \
+      --base-model "${BASE_MODEL}" \
+      --vicuna-model "${VICUNA_MODEL}" \
+      --stage2-dir "${STAGE2_DIR}" \
+      --data-dir "${TEST_DATA_DIR}" \
+      --output-dir "${OUTPUT_DIR}/representation" \
+      --layers "${rep_layer_args[@]}" \
+      --stage2-max-samples "${rep_stage2_samples}" \
+      --stage3-samples "${rep_stage3_samples}"
 else
-  echo "[2] Representation audit skipped."
+  record_skipped "representation" "RUN_REPRESENTATION=False"
 fi
 
+# ---------------------------------------------------------------------------
+# Layer 3: lightweight language preservation
+# ---------------------------------------------------------------------------
 if is_true "${RUN_LANGUAGE}"; then
   ppl_arg=()
   if is_true "${SKIP_PPL}"; then
     ppl_arg+=(--skip-ppl)
   fi
   for model_kind in base stage2; do
-    echo "[3] Language preservation: ${model_kind}"
-    python "${SCRIPT_DIR}/evaluate_language.py" \
-      --model-kind "${model_kind}" \
-      --base-model "${BASE_MODEL}" \
-      --stage2-dir "${STAGE2_DIR}" \
-      --output-dir "${OUTPUT_DIR}/language" \
-      --ppl-max-chars "${PPL_MAX_CHARS}" \
-      "${ppl_arg[@]}"
+    run_step "language_${model_kind}" \
+      python "${SCRIPT_DIR}/evaluate_language.py" \
+        --model-kind "${model_kind}" \
+        --base-model "${BASE_MODEL}" \
+        --stage2-dir "${STAGE2_DIR}" \
+        --output-dir "${OUTPUT_DIR}/language" \
+        --ppl-max-chars "${PPL_MAX_CHARS}" \
+        "${ppl_arg[@]}"
   done
 else
-  echo "[3] Language preservation skipped."
+  record_skipped "language_base" "RUN_LANGUAGE=False"
+  record_skipped "language_stage2" "RUN_LANGUAGE=False"
 fi
 
+# ---------------------------------------------------------------------------
+# Layer 4: Stage3 transfer stress tests
+# ---------------------------------------------------------------------------
 if is_true "${RUN_STAGE3_TRANSFER}"; then
-  echo "[4] Stage3 transfer stress tests / normal image."
-  python "${SCRIPT_DIR}/evaluate_behavior.py" \
-    --model-kind stage2 \
-    --base-model "${BASE_MODEL}" \
-    --stage1-dir "${STAGE1_DIR}" \
-    --stage2-dir "${STAGE2_DIR}" \
-    --data-dir "${TEST_DATA_DIR}" \
-    --datasets stage3_base stage3_values stage3_unseen stage3_wide \
-    --image-mode normal \
-    --output-dir "${OUTPUT_DIR}" \
-    "${resume_arg[@]}" \
-    "${max_arg[@]}"
+  run_step "stage3_normal" \
+    python "${SCRIPT_DIR}/evaluate_behavior.py" \
+      --model-kind stage2 \
+      --base-model "${BASE_MODEL}" \
+      --stage1-dir "${STAGE1_DIR}" \
+      --stage2-dir "${STAGE2_DIR}" \
+      --data-dir "${TEST_DATA_DIR}" \
+      --datasets stage3_base stage3_values stage3_unseen stage3_wide \
+      --image-mode normal \
+      --output-dir "${OUTPUT_DIR}" \
+      "${resume_arg[@]}" \
+      "${max_arg[@]}"
 
   if is_true "${RUN_STAGE3_IMAGE_ABLATIONS}"; then
     for image_mode in ${IMAGE_ABLATION_MODES}; do
-      echo "[4A] Stage3 visual ablation: ${image_mode}"
-      python "${SCRIPT_DIR}/evaluate_behavior.py" \
-        --model-kind stage2 \
-        --base-model "${BASE_MODEL}" \
-        --stage1-dir "${STAGE1_DIR}" \
-        --stage2-dir "${STAGE2_DIR}" \
-        --data-dir "${TEST_DATA_DIR}" \
-        --datasets stage3_base stage3_values stage3_unseen stage3_wide \
-        --image-mode "${image_mode}" \
-        --output-dir "${OUTPUT_DIR}" \
-        "${resume_arg[@]}" \
-        "${max_arg[@]}"
+      run_step "stage3_${image_mode}" \
+        python "${SCRIPT_DIR}/evaluate_behavior.py" \
+          --model-kind stage2 \
+          --base-model "${BASE_MODEL}" \
+          --stage1-dir "${STAGE1_DIR}" \
+          --stage2-dir "${STAGE2_DIR}" \
+          --data-dir "${TEST_DATA_DIR}" \
+          --datasets stage3_base stage3_values stage3_unseen stage3_wide \
+          --image-mode "${image_mode}" \
+          --output-dir "${OUTPUT_DIR}" \
+          "${resume_arg[@]}" \
+          "${max_arg[@]}"
     done
   else
-    echo "[4A] Stage3 visual ablations skipped."
+    for image_mode in ${IMAGE_ABLATION_MODES}; do
+      record_skipped "stage3_${image_mode}" "RUN_STAGE3_IMAGE_ABLATIONS=False"
+    done
   fi
 else
-  echo "[4] Stage3 transfer evaluation skipped."
+  record_skipped "stage3_normal" "RUN_STAGE3_TRANSFER=False"
+  for image_mode in ${IMAGE_ABLATION_MODES}; do
+    record_skipped "stage3_${image_mode}" "RUN_STAGE3_TRANSFER=False"
+  done
 fi
 
+write_fallback_summary() {
+  local summary_path="${OUTPUT_DIR}/evaluation_summary.md"
+  {
+    echo "# Stage-2 Checkpoint Evaluation Summary"
+    echo
+    echo "> WARNING: summarize.py failed. This fallback report contains orchestration status only."
+    echo "> Raw successful outputs remain under: ${OUTPUT_DIR}"
+    echo
+    echo "## Execution status"
+    echo
+    echo '| step | status | exit code | log |'
+    echo '|---|---|---:|---|'
+    tail -n +2 "${STATUS_FILE}" | while IFS=$'\t' read -r step status code log_path; do
+      printf '| %s | %s | %s | %s |\n' "${step}" "${status}" "${code}" "${log_path}"
+    done
+    echo
+    echo "Full console log: ${RUN_LOG}"
+  } > "${summary_path}"
+}
+
+# ---------------------------------------------------------------------------
+# Final summary. Missing/failed upstream outputs are intentionally tolerated by
+# summarize.py; they appear as N/A together with the execution-status table.
+# ---------------------------------------------------------------------------
 if is_true "${RUN_SUMMARY}"; then
-  echo "[Summary] Combining metrics."
-  python "${SCRIPT_DIR}/summarize.py" --root "${OUTPUT_DIR}"
+  run_step "summary_generation" \
+    python "${SCRIPT_DIR}/summarize.py" --root "${OUTPUT_DIR}"
+  summary_rc=${LAST_STEP_RC}
+  if [[ ${summary_rc} -ne 0 || ! -s "${OUTPUT_DIR}/evaluation_summary.md" ]]; then
+    echo "WARNING: summarize.py did not produce a usable report; writing fallback summary." >&2
+    write_fallback_summary
+  fi
 else
-  echo "[Summary] Summary generation skipped."
+  record_skipped "summary_generation" "RUN_SUMMARY=False"
+  write_fallback_summary
 fi
 
+echo
 echo "============================================================"
-echo "Stage-2 checkpoint evaluation completed."
+echo "Stage-2 checkpoint evaluation finished (fail-open mode)."
 echo "Results directory: ${OUTPUT_DIR}"
-echo "Main report: ${OUTPUT_DIR}/evaluation_summary.md"
+echo "Main report to download: ${OUTPUT_DIR}/evaluation_summary.md"
 echo "Machine-readable summary: ${OUTPUT_DIR}/evaluation_summary.json"
-echo "Representation detail: ${OUTPUT_DIR}/representation/representation.json"
+echo "Execution status: ${STATUS_FILE}"
 echo "Full console log: ${RUN_LOG}"
 echo "============================================================"
+
+# Deliberately return 0 if the shell itself survived. Individual failures are
+# encoded in evaluation_summary.md and step_status.tsv.
+exit 0
