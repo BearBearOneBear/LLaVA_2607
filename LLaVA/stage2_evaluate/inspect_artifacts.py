@@ -12,7 +12,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stage1-dir", type=Path, default=Path("./checkpoints/geometry_stage1"))
     parser.add_argument("--stage2-dir", type=Path, default=Path("./checkpoints/geometry_stage2"))
     parser.add_argument("--logs-root", type=Path, default=Path("./logs/geometry_pipeline"))
-    parser.add_argument("--output", type=Path, default=Path("./stage2_evaludate/results/integrity.json"))
+    parser.add_argument("--output", type=Path, default=Path("./stage2_evaluate/results/integrity.json"))
     return parser.parse_args()
 
 
