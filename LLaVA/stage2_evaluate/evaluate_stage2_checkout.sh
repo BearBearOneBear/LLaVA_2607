@@ -1,6 +1,5 @@
 #!/bin/bash
 set -euo pipefail
-
 # ============================================================
 # Stage-2 Checkpoint Evaluator
 #
@@ -13,13 +12,14 @@ set -euo pipefail
 #       ├── inspect_artifacts.py
 #       ├── inspect_weights.py
 #       ├── evaluate_behavior.py
+#       ├── evaluate_representation.py
 #       ├── evaluate_language.py
 #       ├── summarize.py
 #       └── evaluate_stage2_checkout.sh
 #
 # Layer 0 : integrity + weight delta
 # Layer 1 : Stage1/Stage2 behavior
-# Layer 2 : representation audit (deferred)
+# Layer 2 : representation sanity check for KD design
 # Layer 3 : lightweight language preservation
 # Layer 4 : Stage3 transfer stress tests
 # ============================================================
@@ -36,6 +36,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
 BASE_MODEL="${BASE_MODEL:-liuhaotian/llava-v1.5-7b}"
+VICUNA_MODEL="${VICUNA_MODEL:-lmsys/vicuna-7b-v1.5}"
 STAGE1_DIR="${STAGE1_DIR:-${REPO_ROOT}/checkpoints/geometry_stage1}"
 STAGE2_DIR="${STAGE2_DIR:-${REPO_ROOT}/checkpoints/geometry_stage2}"
 TEST_DATA_DIR="${TEST_DATA_DIR:-${REPO_ROOT}/stage2_test_data}"
@@ -48,6 +49,7 @@ export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 RUN_INTEGRITY="${RUN_INTEGRITY:-True}"
 RUN_WEIGHT_AUDIT="${RUN_WEIGHT_AUDIT:-True}"
 RUN_BEHAVIOR="${RUN_BEHAVIOR:-True}"
+RUN_REPRESENTATION="${RUN_REPRESENTATION:-True}"
 RUN_LANGUAGE="${RUN_LANGUAGE:-True}"
 RUN_STAGE3_TRANSFER="${RUN_STAGE3_TRANSFER:-True}"
 RUN_IMAGE_ABLATIONS="${RUN_IMAGE_ABLATIONS:-True}"
@@ -59,9 +61,21 @@ RUN_SUMMARY="${RUN_SUMMARY:-True}"
 MAX_SAMPLES="${MAX_SAMPLES:-0}"
 RESUME="${RESUME:-True}"
 
+# Representation audit defaults.
+REP_LAYERS="${REP_LAYERS:-8 16 24 32}"
+if [[ -z "${REP_STAGE2_MAX_SAMPLES+x}" ]]; then
+  REP_STAGE2_MAX_SAMPLES="${MAX_SAMPLES}"
+fi
+if [[ -z "${REP_STAGE3_SAMPLES+x}" ]]; then
+  if [[ "${MAX_SAMPLES}" != "0" ]]; then
+    REP_STAGE3_SAMPLES="${MAX_SAMPLES}"
+  else
+    REP_STAGE3_SAMPLES="200"
+  fi
+fi
+
 # Expensive LLM truncated SVD is disabled by default.
 SVD_TOPK="${SVD_TOPK:-0}"
-
 # WikiText requires Hugging Face network/cache access.
 SKIP_PPL="${SKIP_PPL:-False}"
 PPL_MAX_CHARS="${PPL_MAX_CHARS:-1500000}"
@@ -70,6 +84,7 @@ required_files=(
   "${SCRIPT_DIR}/inspect_artifacts.py"
   "${SCRIPT_DIR}/inspect_weights.py"
   "${SCRIPT_DIR}/evaluate_behavior.py"
+  "${SCRIPT_DIR}/evaluate_representation.py"
   "${SCRIPT_DIR}/evaluate_language.py"
   "${SCRIPT_DIR}/summarize.py"
 )
@@ -107,11 +122,14 @@ if [[ "${MAX_SAMPLES}" != "0" ]]; then
   max_arg+=(--max-samples "${MAX_SAMPLES}")
 fi
 
+read -r -a rep_layers_array <<< "${REP_LAYERS}"
+
 echo "============================================================"
 echo "Stage-2 checkpoint evaluation"
 echo "Repository root: ${REPO_ROOT}"
 echo "Evaluator directory: ${SCRIPT_DIR}"
 echo "Base model: ${BASE_MODEL}"
+echo "Vicuna student: ${VICUNA_MODEL}"
 echo "Stage-1 directory: ${STAGE1_DIR}"
 echo "Stage-2 directory: ${STAGE2_DIR}"
 echo "Test data: ${TEST_DATA_DIR}"
@@ -119,7 +137,10 @@ echo "Output: ${OUTPUT_DIR}"
 echo "Run log: ${RUN_LOG}"
 echo "Visible GPUs: ${CUDA_VISIBLE_DEVICES}"
 echo "Max samples per dataset: ${MAX_SAMPLES}"
-echo "Representation audit: deferred"
+echo "Representation audit: ${RUN_REPRESENTATION}"
+echo "  Layers: ${REP_LAYERS}"
+echo "  Stage2 A samples: ${REP_STAGE2_MAX_SAMPLES} (0=all)"
+echo "  Stage3 B samples: ${REP_STAGE3_SAMPLES}"
 echo "Image ablations: ${RUN_IMAGE_ABLATIONS} (${IMAGE_ABLATION_MODES})"
 echo "Stage3 image ablations: ${RUN_STAGE3_IMAGE_ABLATIONS}"
 echo "============================================================"
@@ -185,7 +206,20 @@ else
   echo "[1] Behavior evaluation skipped."
 fi
 
-echo "[2] Representation audit deferred by design."
+if is_true "${RUN_REPRESENTATION}"; then
+  echo "[2] Representation sanity check for KD design."
+  python "${SCRIPT_DIR}/evaluate_representation.py" \
+    --base-model "${BASE_MODEL}" \
+    --vicuna-model "${VICUNA_MODEL}" \
+    --stage2-dir "${STAGE2_DIR}" \
+    --data-dir "${TEST_DATA_DIR}" \
+    --output-dir "${OUTPUT_DIR}/representation" \
+    --layers "${rep_layers_array[@]}" \
+    --stage2-max-samples "${REP_STAGE2_MAX_SAMPLES}" \
+    --stage3-samples "${REP_STAGE3_SAMPLES}"
+else
+  echo "[2] Representation audit skipped."
+fi
 
 if is_true "${RUN_LANGUAGE}"; then
   ppl_arg=()
@@ -254,5 +288,6 @@ echo "Stage-2 checkpoint evaluation completed."
 echo "Results directory: ${OUTPUT_DIR}"
 echo "Main report: ${OUTPUT_DIR}/evaluation_summary.md"
 echo "Machine-readable summary: ${OUTPUT_DIR}/evaluation_summary.json"
+echo "Representation detail: ${OUTPUT_DIR}/representation/representation.json"
 echo "Full console log: ${RUN_LOG}"
 echo "============================================================"
