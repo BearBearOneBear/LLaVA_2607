@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-model", default="liuhaotian/llava-v1.5-7b")
     parser.add_argument("--stage1-dir", type=Path, default=Path("./checkpoints/geometry_stage1"))
     parser.add_argument("--stage2-dir", type=Path, default=Path("./checkpoints/geometry_stage2"))
-    parser.add_argument("--output-dir", type=Path, default=Path("./stage2_evaludate/results/weight_audit"))
+    parser.add_argument("--output-dir", type=Path, default=Path("./stage2_evaluate/results/weight_audit"))
     parser.add_argument("--sample-per-tensor", type=int, default=4096)
     parser.add_argument("--global-sample-limit", type=int, default=750000)
     parser.add_argument(
