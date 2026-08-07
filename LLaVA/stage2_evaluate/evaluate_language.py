@@ -73,7 +73,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-kind", choices=["base", "stage2"], required=True)
     parser.add_argument("--base-model", default="liuhaotian/llava-v1.5-7b")
     parser.add_argument("--stage2-dir", type=Path, default=Path("./checkpoints/geometry_stage2"))
-    parser.add_argument("--output-dir", type=Path, default=Path("./stage2_evaludate/results/language"))
+    parser.add_argument("--output-dir", type=Path, default=Path("./stage2_evaluate/results/language"))
     parser.add_argument("--conv-mode", default="llava_v1")
     parser.add_argument("--max-new-tokens", type=int, default=128)
     parser.add_argument("--skip-ppl", action="store_true")
