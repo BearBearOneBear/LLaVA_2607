@@ -50,12 +50,9 @@ RUN_WEIGHT_AUDIT="${RUN_WEIGHT_AUDIT:-True}"
 RUN_BEHAVIOR="${RUN_BEHAVIOR:-True}"
 RUN_LANGUAGE="${RUN_LANGUAGE:-True}"
 RUN_STAGE3_TRANSFER="${RUN_STAGE3_TRANSFER:-True}"
-<<<<<<< HEAD
 RUN_IMAGE_ABLATIONS="${RUN_IMAGE_ABLATIONS:-True}"
 RUN_STAGE3_IMAGE_ABLATIONS="${RUN_STAGE3_IMAGE_ABLATIONS:-True}"
 IMAGE_ABLATION_MODES="${IMAGE_ABLATION_MODES:-shuffled blank none}"
-=======
->>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
 RUN_SUMMARY="${RUN_SUMMARY:-True}"
 
 # 0 means all rows. Example: MAX_SAMPLES=20 for smoke test.
@@ -123,11 +120,8 @@ echo "Run log: ${RUN_LOG}"
 echo "Visible GPUs: ${CUDA_VISIBLE_DEVICES}"
 echo "Max samples per dataset: ${MAX_SAMPLES}"
 echo "Representation audit: deferred"
-<<<<<<< HEAD
 echo "Image ablations: ${RUN_IMAGE_ABLATIONS} (${IMAGE_ABLATION_MODES})"
 echo "Stage3 image ablations: ${RUN_STAGE3_IMAGE_ABLATIONS}"
-=======
->>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
 echo "============================================================"
 
 if is_true "${RUN_INTEGRITY}"; then
@@ -155,11 +149,7 @@ fi
 
 if is_true "${RUN_BEHAVIOR}"; then
   for model_kind in base stage1 stage2; do
-<<<<<<< HEAD
     echo "[1] Behavior evaluation: ${model_kind} / normal image"
-=======
-    echo "[1] Behavior evaluation: ${model_kind}"
->>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
     python "${SCRIPT_DIR}/evaluate_behavior.py" \
       --model-kind "${model_kind}" \
       --base-model "${BASE_MODEL}" \
@@ -167,15 +157,11 @@ if is_true "${RUN_BEHAVIOR}"; then
       --stage2-dir "${STAGE2_DIR}" \
       --data-dir "${TEST_DATA_DIR}" \
       --datasets stage1 stage2 \
-<<<<<<< HEAD
       --image-mode normal \
-=======
->>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
       --output-dir "${OUTPUT_DIR}" \
       "${resume_arg[@]}" \
       "${max_arg[@]}"
   done
-<<<<<<< HEAD
 
   if is_true "${RUN_IMAGE_ABLATIONS}"; then
     for image_mode in ${IMAGE_ABLATION_MODES}; do
@@ -195,8 +181,6 @@ if is_true "${RUN_BEHAVIOR}"; then
   else
     echo "[1A] Stage2 visual ablations skipped."
   fi
-=======
->>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
 else
   echo "[1] Behavior evaluation skipped."
 fi
@@ -223,11 +207,7 @@ else
 fi
 
 if is_true "${RUN_STAGE3_TRANSFER}"; then
-<<<<<<< HEAD
   echo "[4] Stage3 transfer stress tests / normal image."
-=======
-  echo "[4] Stage3 transfer stress tests."
->>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
   python "${SCRIPT_DIR}/evaluate_behavior.py" \
     --model-kind stage2 \
     --base-model "${BASE_MODEL}" \
@@ -235,7 +215,6 @@ if is_true "${RUN_STAGE3_TRANSFER}"; then
     --stage2-dir "${STAGE2_DIR}" \
     --data-dir "${TEST_DATA_DIR}" \
     --datasets stage3_base stage3_values stage3_unseen stage3_wide \
-<<<<<<< HEAD
     --image-mode normal \
     --output-dir "${OUTPUT_DIR}" \
     "${resume_arg[@]}" \
@@ -259,11 +238,6 @@ if is_true "${RUN_STAGE3_TRANSFER}"; then
   else
     echo "[4A] Stage3 visual ablations skipped."
   fi
-=======
-    --output-dir "${OUTPUT_DIR}" \
-    "${resume_arg[@]}" \
-    "${max_arg[@]}"
->>>>>>> 499470cfa0cb6010a9ddbc450ed1509fba3563c8
 else
   echo "[4] Stage3 transfer evaluation skipped."
 fi
