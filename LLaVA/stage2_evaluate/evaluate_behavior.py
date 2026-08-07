@@ -99,7 +99,7 @@ def parse_args() -> argparse.Namespace:
         choices=sorted(DATASET_GLOBS),
         default=["stage1", "stage2"],
     )
-    parser.add_argument("--output-dir", type=Path, default=Path("./stage2_evaludate/results"))
+    parser.add_argument("--output-dir", type=Path, default=Path("./stage2_evaluate/results"))
     parser.add_argument("--conv-mode", default="llava_v1")
     parser.add_argument("--max-new-tokens-local", type=int, default=128)
     parser.add_argument("--max-new-tokens-anchor", type=int, default=768)
