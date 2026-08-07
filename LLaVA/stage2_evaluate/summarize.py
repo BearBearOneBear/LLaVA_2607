@@ -9,7 +9,7 @@ from typing import Any
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Combine Stage-2 evaluator outputs into one summary.")
-    parser.add_argument("--root", type=Path, default=Path("./stage2_evaludate/results"))
+    parser.add_argument("--root", type=Path, default=Path("./stage2_evaluate/results"))
     return parser.parse_args()
 
 
