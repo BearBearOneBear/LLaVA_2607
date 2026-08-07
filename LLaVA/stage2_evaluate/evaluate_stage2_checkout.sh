@@ -9,7 +9,7 @@ set -euo pipefail
 #   ├── checkpoints/geometry_stage1
 #   ├── checkpoints/geometry_stage2
 #   ├── stage2_test_data
-#   └── stage2_evaludate/
+#   └── stage2_evaluate/
 #       ├── inspect_artifacts.py
 #       ├── inspect_weights.py
 #       ├── evaluate_behavior.py
