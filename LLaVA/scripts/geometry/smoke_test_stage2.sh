@@ -1,182 +1,94 @@
-from __future__ import annotations
+#!/bin/bash
 
-import os
-from typing import Optional
-
-
-ALLOWED_IMPLEMENTATIONS = {
-    "auto",
-    "flash_attention_2",
-    "sdpa",
-    "eager",
-    "none",
-    "default",
-    "",
-}
-
-MIN_FLASH_ATTENTION_CAPABILITY = 8
+set -euo pipefail
 
 
-def _get_local_rank() -> int:
-    """DeepSpeed가 전달한 local rank를 안전하게 읽는다."""
-
-    value = os.environ.get("LOCAL_RANK", "-1")
-
-    try:
-        return int(value)
-    except ValueError:
-        return -1
-
-
-def rank0_print(message: str) -> None:
-    """단일 프로세스 또는 local rank 0에서만 출력한다."""
-
-    if _get_local_rank() in {-1, 0}:
-        print(message)
+# ============================================================
+# Stage 2 Smoke Test
+#   - Model load
+#   - MLP projector load
+#   - Data read
+#   - Backward
+#   - Loss
+#   - Checkpoint
+# ============================================================
 
 
-def _flash_attention_2_usable() -> tuple[bool, str]:
-    """FlashAttention-2를 실제로 선택해도 되는지 검사한다."""
+# ------------------------------------------------------------
+# Stage 1 projector
+# ------------------------------------------------------------
 
-    try:
-        import torch
-        from transformers.utils import (
-            is_flash_attn_2_available,
-        )
-    except ImportError as error:
-        return False, f"required import failed: {error!r}"
+STAGE1_PROJECTOR_PATH="${STAGE1_PROJECTOR_PATH:-./checkpoints/geometry_stage1/mm_projector.bin}"
 
-    if not is_flash_attn_2_available():
-        return (
-            False,
-            "transformers reports FlashAttention-2 as unavailable",
-        )
-
-    if not torch.cuda.is_available():
-        return False, "CUDA is unavailable"
-
-    # CUDA FlashAttention-2는 Ampere(SM80) 이상에서 사용한다.
-    # ROCm에서는 CUDA compute capability 검사를 적용하지 않는다.
-    if torch.version.cuda is not None:
-        device_count = torch.cuda.device_count()
-
-        if device_count <= 0:
-            return False, "no CUDA device was detected"
-
-        local_rank = _get_local_rank()
-        device_index = local_rank if local_rank >= 0 else 0
-
-        if device_index >= device_count:
-            return (
-                False,
-                f"LOCAL_RANK={local_rank} exceeds the visible "
-                f"device count ({device_count})",
-            )
-
-        major, minor = torch.cuda.get_device_capability(
-            device_index
-        )
-
-        if major < MIN_FLASH_ATTENTION_CAPABILITY:
-            return (
-                False,
-                f"compute capability {major}.{minor} is below "
-                f"{MIN_FLASH_ATTENTION_CAPABILITY}.0 (Ampere)",
-            )
-
-    return True, ""
+if [[ ! -f "${STAGE1_PROJECTOR_PATH}" ]]; then
+    echo "Stage 1 projector was not found:" >&2
+    echo "${STAGE1_PROJECTOR_PATH}" >&2
+    exit 1
+fi
 
 
-def _sdpa_usable() -> bool:
-    """현재 Transformers/PyTorch 조합의 SDPA 지원 여부를 확인한다."""
+# ------------------------------------------------------------
+# Data paths
+# ------------------------------------------------------------
 
-    try:
-        from transformers.utils import is_torch_sdpa_available
-    except ImportError:
-        return False
+TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-./geometry_data/stage2_geometry_grounding/train.json}"
 
-    return is_torch_sdpa_available()
+EVAL_DATA_PATH="${EVAL_DATA_PATH:-./geometry_data/stage2_geometry_grounding/validation.json}"
+
+IMAGE_FOLDER="${IMAGE_FOLDER:-./geometry_data/stage2_geometry_grounding/images}"
 
 
-def resolve_attention_implementation() -> Optional[str]:
-    """환경변수로 attention backend를 선택한다.
+# ------------------------------------------------------------
+# Output path
+# ------------------------------------------------------------
 
-    ATTENTION_IMPLEMENTATION 허용값:
-      auto, flash_attention_2, sdpa, eager, none, default, ""
+SMOKE_OUTPUT_DIR="${SMOKE_OUTPUT_DIR:-./checkpoints/geometry_stage2_smoke}"
 
-    auto 선택 순서:
-      flash_attention_2 -> sdpa -> Transformers 기본 구현
-    """
+# 기본 smoke-test 경로 또는 명시적으로 지정한 경로만 삭제한다.
+if [[ -z "${SMOKE_OUTPUT_DIR}" ]] || [[ "${SMOKE_OUTPUT_DIR}" == "/" ]]; then
+    echo "Unsafe SMOKE_OUTPUT_DIR: ${SMOKE_OUTPUT_DIR}" >&2
+    exit 1
+fi
 
-    requested = os.environ.get(
-        "ATTENTION_IMPLEMENTATION",
-        "auto",
-    ).strip().lower()
+rm -rf "${SMOKE_OUTPUT_DIR}"
+mkdir -p "${SMOKE_OUTPUT_DIR}"
 
-    if requested not in ALLOWED_IMPLEMENTATIONS:
-        raise ValueError(
-            "ATTENTION_IMPLEMENTATION must be one of: "
-            "auto, flash_attention_2, sdpa, eager, none, "
-            f"default. Received: {requested!r}"
-        )
 
-    if requested in {"", "none", "default"}:
-        rank0_print(
-            "Attention implementation: transformers default"
-        )
-        return None
+echo "Starting Stage 2 smoke test."
+echo "Stage 1 projector: ${STAGE1_PROJECTOR_PATH}"
+echo "Training data: ${TRAIN_DATA_PATH}"
+echo "Validation data: ${EVAL_DATA_PATH}"
+echo "Image folder: ${IMAGE_FOLDER}"
+echo "Output directory: ${SMOKE_OUTPUT_DIR}"
 
-    if requested == "eager":
-        rank0_print("Attention implementation: eager")
-        return "eager"
 
-    if requested == "sdpa":
-        if not _sdpa_usable():
-            raise RuntimeError(
-                "ATTENTION_IMPLEMENTATION=sdpa was explicitly "
-                "requested, but this Transformers/PyTorch build "
-                "does not support it."
-            )
+# ------------------------------------------------------------
+# Reuse the Stage 2 training script
+# ------------------------------------------------------------
 
-        rank0_print("Attention implementation: sdpa")
-        return "sdpa"
+STAGE1_PROJECTOR_PATH="${STAGE1_PROJECTOR_PATH}" \
+TRAIN_DATA_PATH="${TRAIN_DATA_PATH}" \
+EVAL_DATA_PATH="${EVAL_DATA_PATH}" \
+IMAGE_FOLDER="${IMAGE_FOLDER}" \
+OUTPUT_DIR="${SMOKE_OUTPUT_DIR}" \
+NUM_TRAIN_EPOCHS=1 \
+MAX_STEPS=1 \
+PER_DEVICE_TRAIN_BATCH_SIZE=1 \
+PER_DEVICE_EVAL_BATCH_SIZE=1 \
+GRADIENT_ACCUMULATION_STEPS=1 \
+EVALUATION_STRATEGY=steps \
+SAVE_STRATEGY=steps \
+EVAL_STEPS=1 \
+SAVE_STEPS=1 \
+SAVE_TOTAL_LIMIT=1 \
+LOGGING_STEPS=1 \
+DATALOADER_NUM_WORKERS=0 \
+MIN_FREE_DISK_GB="${MIN_FREE_DISK_GB:-0}" \
+bash scripts/geometry/train_stage2.sh
 
-    flash_usable, flash_reason = (
-        _flash_attention_2_usable()
-    )
 
-    if requested == "flash_attention_2":
-        if not flash_usable:
-            raise RuntimeError(
-                "ATTENTION_IMPLEMENTATION=flash_attention_2 was "
-                "explicitly requested, but it cannot be used: "
-                f"{flash_reason}"
-            )
-
-        rank0_print(
-            "Attention implementation: flash_attention_2"
-        )
-        return "flash_attention_2"
-
-    # requested == "auto"
-    if flash_usable:
-        rank0_print(
-            "Attention implementation: flash_attention_2"
-        )
-        return "flash_attention_2"
-
-    rank0_print(
-        "FlashAttention-2 is unavailable. "
-        f"Reason: {flash_reason}."
-    )
-
-    if _sdpa_usable():
-        rank0_print("Attention implementation: sdpa")
-        return "sdpa"
-
-    rank0_print(
-        "SDPA is unavailable. "
-        "Using the Transformers default attention implementation."
-    )
-
-    return None
+echo "Stage 2 smoke test completed."
+echo "Trainer state: ${SMOKE_OUTPUT_DIR}/trainer_state.json"
+echo "Model config: ${SMOKE_OUTPUT_DIR}/config.json"
+echo "Intermediate checkpoint: ${SMOKE_OUTPUT_DIR}/checkpoint-1"
+echo "Final model directory: ${SMOKE_OUTPUT_DIR}"
