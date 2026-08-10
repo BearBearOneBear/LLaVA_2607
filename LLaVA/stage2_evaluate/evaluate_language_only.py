@@ -1,24 +1,5 @@
 #!/usr/bin/env python3
-"""Perplexity audit: what did Stage 1+2 training cost general language ability?
 
-Compares llava-v1.5-7b against the Stage 2 checkpoint on held-out English text.
-The base model is Stage 2's starting point, so the gap between them is exactly
-what this training run cost, and it is also the right reference for a rollback
-experiment, which restores Stage 2 layers to base weights rather than to Vicuna's.
-
-Only the difference matters. Absolute perplexity depends on the corpus and the
-tokenizer, so both models read the same text through the same tokenizer, and the
-text's sha256 is recorded next to the numbers.
-
-Corpus loading is the part that tends to fail. `load_dataset("wikitext", ...)`
-resolves to a dataset script, and script execution was removed in datasets 3.0,
-so that call now raises whether or not the network is reachable. Four routes are
-tried in order, ending at a plain GitHub file needing no Hugging Face access.
-
-Every path is resolved from this file's own location, so it runs from anywhere:
-
-    python evaluate_language_only.py
-"""
 
 from __future__ import annotations
 
