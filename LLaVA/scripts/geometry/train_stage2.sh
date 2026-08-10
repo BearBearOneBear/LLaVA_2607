@@ -65,7 +65,7 @@ export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 
 MASTER_PORT="${MASTER_PORT:-29502}"
-DEEPSPEED_CONFIG="${DEEPSPEED_CONFIG:-./scripts/zero3.json}"
+DEEPSPEED_CONFIG="${DEEPSPEED_CONFIG:-./scripts/zero3_offload.json}"
 
 
 # ------------------------------------------------------------

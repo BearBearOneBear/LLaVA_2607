@@ -94,7 +94,20 @@ class LlavaMetaModel:
             def get_w(weights, keyword):
                 return {k.split(keyword + '.')[1]: v for k, v in weights.items() if keyword in k}
 
-            self.mm_projector.load_state_dict(get_w(mm_projector_weights, 'mm_projector'))
+            projector_state_dict = get_w(mm_projector_weights, "mm_projector")
+            projector_parameters = list(self.mm_projector.parameters())
+
+            if any(hasattr(param, "ds_id") for param in projector_parameters):
+                import deepspeed
+
+                with deepspeed.zero.GatheredParameters(
+                    projector_parameters,
+                    modifier_rank=0,
+                ):
+                    if torch.distributed.get_rank() == 0:
+                        self.mm_projector.load_state_dict(projector_state_dict)
+            else:
+                self.mm_projector.load_state_dict(projector_state_dict)
 
 
 def unpad_image(tensor, original_size):
