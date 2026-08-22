@@ -4,19 +4,12 @@ from __future__ import annotations
 """
 Visual-dependency evaluation for Stage2 geometry concepts.
 
-Purpose
--------
-Measure how much Stage2 concept classification depends on the actual
-geometric image content.
-
 Models
-------
 Default:
 - stage2
 - stage2_only
 
 Conditions
-----------
 normal:
     Correct image.
 
@@ -30,40 +23,11 @@ blank:
 none:
     No image token / no image input.
 
-Metric
-------
-27-way constrained Stage2 concept accuracy.
-
-Diagnostics
------------
-- correct
-- wrong concept
-- unparsed
-- inference error
-- parsed rate
-
-Important
----------
-`none`, `blank`, and `shuffled` are empirical visual-ablation conditions.
-They are NOT theoretical lower bounds.
-
-A uniform random-choice reference for the 27-way classification is:
-
-    1 / 27 = 3.70%
-
-Outputs
--------
-1. visual_dependency_results.md
-2. Per-model JSONL files with all prompts, raw responses, parsed predictions,
-   image-condition metadata, and errors.
-
 Shared infrastructure:
     helper.py
 
 Shared ontology:
     ontology.py
-
-All paths are supplied through CLI arguments.
 """
 
 import argparse
